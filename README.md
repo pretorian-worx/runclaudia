@@ -1,14 +1,12 @@
 # claudia
 
-Diff-aware post-deploy test agent. Reads a git diff, infers which user-facing flows were affected, and posts a structured test plan to the PR.
+Diff-aware test plan agent. Reads a git diff, infers which user-facing flows were affected, and posts a structured test plan to the PR.
 
-**v1 is plan-only.** No browser, no auth, no execution. The CLI tells you what *should* be tested; a human (for now) decides whether to run it.
+The CLI tells you what *should* be tested; you decide whether to run it. Useful as a reviewer's prompt or as a focused alternative to running a full E2E suite on every PR.
 
 ## Why
 
-Most teams ship code and skip the manual prod check. Full E2E suites are too slow to gate every deploy, so coverage drops to "did the build succeed." This agent closes that gap by giving every PR a focused, diff-scoped test plan in <60 seconds.
-
-The plan-only stage exists to validate the diff→flow inference before we take on the harder runtime, auth, and flake problems. See [`ROADMAP.md`](./ROADMAP.md) for stages B (generate + run) and C (smart test selector).
+Most teams ship code and skip the manual post-deploy check. Full E2E suites are too slow to gate every deploy, so coverage drops to "did the build succeed." claudia closes that gap by giving every PR a focused, diff-scoped test plan in under a minute.
 
 ## Install
 
