@@ -34,7 +34,7 @@ claudia map --refresh
 ## GitHub Action
 
 ```yaml
-- uses: claudia-dev/claudia-action@v0
+- uses: pretorian-worx/runclaudia@v0
   with:
     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```

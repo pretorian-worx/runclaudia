@@ -37,7 +37,7 @@ outputs:
 
 runs:
   using: "node20"
-  main: "dist/index.js"
+  main: "packages/github-action/dist/index.js"
 
 branding:
   icon: "check-circle"
