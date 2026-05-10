@@ -1,4 +1,4 @@
-import type { AppMap, Diff, FileChange } from "./types.js";
+import type { AppMap, Diff, FileChange, RouteEntry } from "./types.js";
 
 export const SYSTEM_PROMPT = `You are claudia, a diff-aware test planner.
 
@@ -13,16 +13,47 @@ Rules:
 - coverageGaps captures *unmapped risk* — changes you can see have impact but no flow in the map covers them.
 - Be terse. The output is read by humans on a PR.`;
 
+/**
+ * Reduce the map to only the routes that the diff actually touches.
+ * Massively cuts prompt token cost on large repos; the brain only needs the
+ * route information for places the diff implicates.
+ *
+ * A route is "implicated" if any of its tracked files appears in the diff
+ * (matching either the post-image path or, for renames, the pre-image path).
+ */
+export function filterMapForDiff(map: AppMap, diff: Diff): {
+  implicated: RouteEntry[];
+  omittedCount: number;
+} {
+  const diffPaths = new Set<string>();
+  for (const f of diff.files) {
+    diffPaths.add(f.path);
+    if (f.oldPath) diffPaths.add(f.oldPath);
+  }
+  const implicated = map.routes.filter((r) => r.files.some((file) => diffPaths.has(file)));
+  return { implicated, omittedCount: map.routes.length - implicated.length };
+}
+
 export function buildUserMessage(args: { diff: Diff; map: AppMap; targetUrl?: string }): string {
   const { diff, map, targetUrl } = args;
+  const { implicated, omittedCount } = filterMapForDiff(map, diff);
   const parts: string[] = [];
+
   parts.push(`# Route map (framework: ${map.framework})`);
   if (map.routes.length === 0) {
     parts.push("(no routes discovered)");
+  } else if (implicated.length === 0) {
+    parts.push(`(none of the ${map.routes.length} known routes are touched by this diff)`);
   } else {
-    for (const r of map.routes) {
+    parts.push(`Showing ${implicated.length} of ${map.routes.length} known routes — only those whose tracked files appear in the diff.`);
+    parts.push("");
+    for (const r of implicated) {
       parts.push(`- ${r.route}`);
       for (const f of r.files) parts.push(`  - ${f}`);
+    }
+    if (omittedCount > 0) {
+      parts.push("");
+      parts.push(`(${omittedCount} other routes exist in this project but are not affected by this diff.)`);
     }
   }
 
