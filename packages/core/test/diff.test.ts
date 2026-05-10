@@ -44,4 +44,22 @@ describe("classifySkip", () => {
   it("skips diffs that are exclusively trivial categories combined", () => {
     expect(classifySkip(makeDiff(["README.md", "pnpm-lock.yaml", ".github/workflows/ci.yml"])).skip).toBe(true);
   });
+
+  it("skips test-only diffs", () => {
+    expect(classifySkip(makeDiff(["src/foo.test.ts", "src/bar.spec.tsx"])).skip).toBe(true);
+    expect(classifySkip(makeDiff(["__tests__/checkout.ts", "e2e/login.spec.ts"])).skip).toBe(true);
+  });
+
+  it("skips infra-only diffs", () => {
+    expect(classifySkip(makeDiff(["infra/main.tf", "infra/variables.tfvars"])).skip).toBe(true);
+    expect(classifySkip(makeDiff(["Dockerfile", "docker-compose.yml"])).skip).toBe(true);
+  });
+
+  it("skips asset-only diffs", () => {
+    expect(classifySkip(makeDiff(["public/logo.png", "public/fonts/inter.woff2"])).skip).toBe(true);
+  });
+
+  it("does NOT skip when a test change is bundled with a code change", () => {
+    expect(classifySkip(makeDiff(["src/foo.test.ts", "src/foo.ts"])).skip).toBe(false);
+  });
 });

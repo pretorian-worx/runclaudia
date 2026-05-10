@@ -60,25 +60,58 @@ const LOCK_PATTERNS = [
   /^Pipfile\.lock$/,
 ];
 const CI_PATTERNS = [/^\.github\//, /^\.circleci\//, /^\.gitlab-ci\.yml$/];
+const TEST_PATTERNS = [
+  /\.test\.[tj]sx?$/,
+  /\.spec\.[tj]sx?$/,
+  /(^|\/)__tests__\//,
+  /(^|\/)tests?\//,
+  /(^|\/)e2e\//,
+  /(^|\/)cypress\//,
+  /(^|\/)playwright\//,
+];
+const INFRA_PATTERNS = [
+  /\.tf$/,
+  /\.tfvars$/,
+  /(^|\/)terraform\//,
+  /(^|\/)infra\//,
+  /(^|\/)deploy\//,
+  /(^|\/)k8s\//,
+  /(^|\/)helm\//,
+  /^Dockerfile$/,
+  /^docker-compose\.ya?ml$/,
+];
+const ASSET_PATTERNS = [
+  /\.(png|jpe?g|gif|webp|avif|svg|ico)$/i,
+  /\.(woff2?|ttf|otf|eot)$/i,
+  /\.(mp4|webm|mov|m4v)$/i,
+  /^public\//,
+];
+
+const TRIVIAL_PATTERN_GROUPS: Array<{ name: string; patterns: RegExp[] }> = [
+  { name: "documentation", patterns: DOC_PATTERNS },
+  { name: "lockfile", patterns: LOCK_PATTERNS },
+  { name: "CI config", patterns: CI_PATTERNS },
+  { name: "test", patterns: TEST_PATTERNS },
+  { name: "infrastructure", patterns: INFRA_PATTERNS },
+  { name: "asset", patterns: ASSET_PATTERNS },
+];
 
 export function classifySkip(diff: Diff): SkipDecision {
   if (diff.files.length === 0) {
     return { skip: true, reason: "No file changes between base and head." };
   }
-  const allDocs = diff.files.every((f) => matches(f.path, DOC_PATTERNS));
-  if (allDocs) return { skip: true, reason: "Diff is documentation-only." };
-  const allLock = diff.files.every((f) => matches(f.path, LOCK_PATTERNS));
-  if (allLock) return { skip: true, reason: "Diff is lockfile-only." };
-  const allCi = diff.files.every((f) => matches(f.path, CI_PATTERNS));
-  if (allCi) return { skip: true, reason: "Diff is CI-config-only." };
-  const allTrivial = diff.files.every(
-    (f) =>
-      matches(f.path, DOC_PATTERNS) ||
-      matches(f.path, LOCK_PATTERNS) ||
-      matches(f.path, CI_PATTERNS),
+  // Single-category short-circuits give a clearer reason string.
+  for (const group of TRIVIAL_PATTERN_GROUPS) {
+    if (diff.files.every((f) => matches(f.path, group.patterns))) {
+      return { skip: true, reason: `Diff is ${group.name}-only.` };
+    }
+  }
+  // Mixed-trivial — still no runtime risk.
+  const allTrivial = diff.files.every((f) =>
+    TRIVIAL_PATTERN_GROUPS.some((g) => matches(f.path, g.patterns)),
   );
   if (allTrivial) {
-    return { skip: true, reason: "Diff contains only docs, lockfiles, and CI config." };
+    return { skip: true, reason: "Diff contains only non-runtime changes (docs, lockfiles, CI, tests, infra, assets)." };
   }
   return { skip: false };
 }
