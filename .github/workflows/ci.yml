@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm -r typecheck
+
+      - run: pnpm -r build
+
+      - run: pnpm -r test
+
+      - name: Verify action bundle is up to date
+        run: |
+          if ! git diff --exit-code packages/github-action/dist; then
+            echo "::error::packages/github-action/dist is stale. Run 'pnpm --filter @claudia/github-action build' and commit the result."
+            exit 1
+          fi

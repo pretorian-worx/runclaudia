@@ -44,3 +44,13 @@ The action posts the plan as a sticky PR comment.
 ## Status
 
 v0.1 — early. Next.js App Router only. Expect rough edges.
+
+## Releases
+
+Versioning and tagging are automated via [release-please](https://github.com/googleapis/release-please) on push to `main`.
+
+- Use **conventional commits** — `feat:`, `fix:`, `docs:`, `refactor:`, etc. Breaking changes: `feat!:` or a `BREAKING CHANGE:` footer.
+- release-please opens a "Release PR" that bumps versions in every `package.json` and updates `CHANGELOG.md`.
+- Merging the Release PR creates a `v0.x.y` git tag, a GitHub Release, and force-moves the `v0` major tag so `uses: pretorian-worx/runclaudia@v0` always points at the latest 0.x.
+
+If the action's bundle (`packages/github-action/dist/`) is stale, CI will fail. Run `pnpm --filter @claudia/github-action build` and commit the result before pushing.
