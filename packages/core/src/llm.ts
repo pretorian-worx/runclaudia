@@ -85,7 +85,7 @@ export async function callPlanner(opts: LlmCallOptions): Promise<LlmResult> {
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
 
   const client = new Anthropic({ apiKey });
-  const model = opts.model ?? "claude-opus-4-7";
+  const model = opts.model ?? "claude-sonnet-4-6";
 
   const response = await client.messages.create({
     model,

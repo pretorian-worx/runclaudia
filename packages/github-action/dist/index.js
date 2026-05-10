@@ -42208,24 +42208,54 @@ const LOCK_PATTERNS = [
     /^Pipfile\.lock$/,
 ];
 const CI_PATTERNS = [/^\.github\//, /^\.circleci\//, /^\.gitlab-ci\.yml$/];
+const TEST_PATTERNS = [
+    /\.test\.[tj]sx?$/,
+    /\.spec\.[tj]sx?$/,
+    /(^|\/)__tests__\//,
+    /(^|\/)tests?\//,
+    /(^|\/)e2e\//,
+    /(^|\/)cypress\//,
+    /(^|\/)playwright\//,
+];
+const INFRA_PATTERNS = [
+    /\.tf$/,
+    /\.tfvars$/,
+    /(^|\/)terraform\//,
+    /(^|\/)infra\//,
+    /(^|\/)deploy\//,
+    /(^|\/)k8s\//,
+    /(^|\/)helm\//,
+    /^Dockerfile$/,
+    /^docker-compose\.ya?ml$/,
+];
+const ASSET_PATTERNS = [
+    /\.(png|jpe?g|gif|webp|avif|svg|ico)$/i,
+    /\.(woff2?|ttf|otf|eot)$/i,
+    /\.(mp4|webm|mov|m4v)$/i,
+    /^public\//,
+];
+const TRIVIAL_PATTERN_GROUPS = [
+    { name: "documentation", patterns: DOC_PATTERNS },
+    { name: "lockfile", patterns: LOCK_PATTERNS },
+    { name: "CI config", patterns: CI_PATTERNS },
+    { name: "test", patterns: TEST_PATTERNS },
+    { name: "infrastructure", patterns: INFRA_PATTERNS },
+    { name: "asset", patterns: ASSET_PATTERNS },
+];
 function classifySkip(diff) {
     if (diff.files.length === 0) {
         return { skip: true, reason: "No file changes between base and head." };
     }
-    const allDocs = diff.files.every((f) => matches(f.path, DOC_PATTERNS));
-    if (allDocs)
-        return { skip: true, reason: "Diff is documentation-only." };
-    const allLock = diff.files.every((f) => matches(f.path, LOCK_PATTERNS));
-    if (allLock)
-        return { skip: true, reason: "Diff is lockfile-only." };
-    const allCi = diff.files.every((f) => matches(f.path, CI_PATTERNS));
-    if (allCi)
-        return { skip: true, reason: "Diff is CI-config-only." };
-    const allTrivial = diff.files.every((f) => matches(f.path, DOC_PATTERNS) ||
-        matches(f.path, LOCK_PATTERNS) ||
-        matches(f.path, CI_PATTERNS));
+    // Single-category short-circuits give a clearer reason string.
+    for (const group of TRIVIAL_PATTERN_GROUPS) {
+        if (diff.files.every((f) => matches(f.path, group.patterns))) {
+            return { skip: true, reason: `Diff is ${group.name}-only.` };
+        }
+    }
+    // Mixed-trivial — still no runtime risk.
+    const allTrivial = diff.files.every((f) => TRIVIAL_PATTERN_GROUPS.some((g) => matches(f.path, g.patterns)));
     if (allTrivial) {
-        return { skip: true, reason: "Diff contains only docs, lockfiles, and CI config." };
+        return { skip: true, reason: "Diff contains only non-runtime changes (docs, lockfiles, CI, tests, infra, assets)." };
     }
     return { skip: false };
 }
@@ -46714,18 +46744,46 @@ Rules:
 - Set verdict to "skip" only if the diff genuinely cannot affect runtime behavior (already-filtered cases shouldn't reach you, so prefer "test").
 - coverageGaps captures *unmapped risk* — changes you can see have impact but no flow in the map covers them.
 - Be terse. The output is read by humans on a PR.`;
+/**
+ * Reduce the map to only the routes that the diff actually touches.
+ * Massively cuts prompt token cost on large repos; the brain only needs the
+ * route information for places the diff implicates.
+ *
+ * A route is "implicated" if any of its tracked files appears in the diff
+ * (matching either the post-image path or, for renames, the pre-image path).
+ */
+function filterMapForDiff(map, diff) {
+    const diffPaths = new Set();
+    for (const f of diff.files) {
+        diffPaths.add(f.path);
+        if (f.oldPath)
+            diffPaths.add(f.oldPath);
+    }
+    const implicated = map.routes.filter((r) => r.files.some((file) => diffPaths.has(file)));
+    return { implicated, omittedCount: map.routes.length - implicated.length };
+}
 function buildUserMessage(args) {
     const { diff, map, targetUrl } = args;
+    const { implicated, omittedCount } = filterMapForDiff(map, diff);
     const parts = [];
     parts.push(`# Route map (framework: ${map.framework})`);
     if (map.routes.length === 0) {
         parts.push("(no routes discovered)");
     }
+    else if (implicated.length === 0) {
+        parts.push(`(none of the ${map.routes.length} known routes are touched by this diff)`);
+    }
     else {
-        for (const r of map.routes) {
+        parts.push(`Showing ${implicated.length} of ${map.routes.length} known routes — only those whose tracked files appear in the diff.`);
+        parts.push("");
+        for (const r of implicated) {
             parts.push(`- ${r.route}`);
             for (const f of r.files)
                 parts.push(`  - ${f}`);
+        }
+        if (omittedCount > 0) {
+            parts.push("");
+            parts.push(`(${omittedCount} other routes exist in this project but are not affected by this diff.)`);
         }
     }
     parts.push("");
@@ -46815,7 +46873,7 @@ async function callPlanner(opts) {
     if (!apiKey)
         throw new Error("ANTHROPIC_API_KEY is not set");
     const client = new sdk({ apiKey });
-    const model = opts.model ?? "claude-opus-4-7";
+    const model = opts.model ?? "claude-sonnet-4-6";
     const response = await client.messages.create({
         model,
         max_tokens: opts.maxTokens ?? 4096,
