@@ -1,0 +1,15 @@
+node_modules
+dist
+.env
+.env.local
+*.log
+.DS_Store
+coverage
+
+# claudia route-map cache (generated per-run)
+.claudia/
+.qa-agent/
+
+# GitHub Action's bundled output MUST be committed so `uses:` can run it.
+!packages/github-action/dist
+!packages/github-action/dist/**

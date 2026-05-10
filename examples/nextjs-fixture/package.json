@@ -1,0 +1,6 @@
+{
+  "name": "@claudia/example-nextjs-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Tiny Next.js App Router fixture used by the adapter tests"
+}
