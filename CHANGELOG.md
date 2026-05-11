@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/pretorian-worx/runclaudia/compare/v0.10.0...v0.11.0) (2026-05-11)
+
+
+### Features
+
+* publish @pretorian-worx/runclaudia-core + -cli to npm ([f6e7dc0](https://github.com/pretorian-worx/runclaudia/commit/f6e7dc031ada8f3ec75cbeaa3741ba798928bd55))
+
 ## [0.10.0](https://github.com/pretorian-worx/runclaudia/compare/v0.9.0...v0.10.0) (2026-05-11)
 
 
