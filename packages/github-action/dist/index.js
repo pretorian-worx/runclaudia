@@ -42359,20 +42359,23 @@ const external_node_fs_namespaceObject = require("node:fs");
 
 const ROUTE_FILES = ["page.tsx", "page.ts", "page.jsx", "page.js"];
 const LAYOUT_FILES = ["layout.tsx", "layout.ts", "layout.jsx", "layout.js"];
+const ENDPOINT_FILES = ["route.ts", "route.tsx", "route.js", "route.jsx"];
 function buildNextMap(opts) {
     const rootDir = opts.rootDir;
     const appDir = opts.appDir ?? findAppDir(rootDir);
     const tsPaths = loadTsPaths(rootDir);
     const routes = [];
+    const endpoints = [];
     const fileToRoutes = {};
     if (appDir) {
-        walk(appDir, "", appDir, rootDir, tsPaths, routes, fileToRoutes, opts.maxDepth ?? 12);
+        walk(appDir, "", appDir, rootDir, tsPaths, routes, endpoints, fileToRoutes, opts.maxDepth ?? 12);
     }
     return {
         framework: "nextjs-app",
         generatedAt: new Date().toISOString(),
         rootDir,
         routes,
+        endpoints,
         fileToRoutes,
     };
 }
@@ -42413,11 +42416,12 @@ function findAppDir(rootDir) {
     }
     return null;
 }
-function walk(dir, routePath, appRoot, rootDir, tsPaths, routes, fileToRoutes, remainingDepth) {
+function walk(dir, routePath, appRoot, rootDir, tsPaths, routes, endpoints, fileToRoutes, remainingDepth) {
     if (remainingDepth <= 0)
         return;
     const entries = (0,external_node_fs_namespaceObject.readdirSync)(dir, { withFileTypes: true });
     const pageFile = entries.find((e) => e.isFile() && ROUTE_FILES.includes(e.name));
+    const endpointFile = entries.find((e) => e.isFile() && ENDPOINT_FILES.includes(e.name));
     if (pageFile) {
         const route = routePath || "/";
         const pageAbs = (0,external_node_path_namespaceObject.join)(dir, pageFile.name);
@@ -42433,14 +42437,76 @@ function walk(dir, routePath, appRoot, rootDir, tsPaths, routes, fileToRoutes, r
             (fileToRoutes[f] ??= []).push(route);
         }
     }
+    if (endpointFile) {
+        const path = routePath || "/";
+        const handlerAbs = (0,external_node_path_namespaceObject.join)(dir, endpointFile.name);
+        const relFile = toRel(rootDir, handlerAbs);
+        const parsed = parseEndpointHandler(handlerAbs);
+        for (const m of parsed) {
+            endpoints.push({
+                route: `${m.method} ${path}`,
+                path,
+                method: m.method,
+                file: relFile,
+                bodyShape: m.bodyShape,
+            });
+        }
+        (fileToRoutes[relFile] ??= []).push(...parsed.map((m) => `${m.method} ${path}`));
+    }
     for (const entry of entries) {
         if (!entry.isDirectory())
             continue;
         if (entry.name.startsWith("_"))
             continue;
         const childRoute = segmentToRoute(entry.name, routePath);
-        walk((0,external_node_path_namespaceObject.join)(dir, entry.name), childRoute, appRoot, rootDir, tsPaths, routes, fileToRoutes, remainingDepth - 1);
+        walk((0,external_node_path_namespaceObject.join)(dir, entry.name), childRoute, appRoot, rootDir, tsPaths, routes, endpoints, fileToRoutes, remainingDepth - 1);
     }
+}
+const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+function parseEndpointHandler(file) {
+    let src;
+    try {
+        src = (0,external_node_fs_namespaceObject.readFileSync)(file, "utf8");
+    }
+    catch {
+        return [];
+    }
+    // Find each method's declaration position so we can slice its body region.
+    const positions = [];
+    for (const m of HTTP_METHODS) {
+        const re = new RegExp(`export\\s+(?:async\\s+)?(?:function|const|let|var)\\s+${m}\\b|export\\s*\\{[^}]*\\b(?:[A-Za-z_$][\\w$]*\\s+as\\s+)?${m}\\b`, "g");
+        let match;
+        while ((match = re.exec(src))) {
+            positions.push({ method: m, start: match.index });
+        }
+    }
+    if (positions.length === 0)
+        return [];
+    positions.sort((a, b) => a.start - b.start);
+    const out = [];
+    for (let i = 0; i < positions.length; i++) {
+        const start = positions[i].start;
+        const end = i + 1 < positions.length ? positions[i + 1].start : src.length;
+        const body = src.slice(start, end);
+        out.push({ method: positions[i].method, bodyShape: detectBodyShape(body) });
+    }
+    return out;
+}
+// Look only at request-side body parsing — `req.json()`, `await request.formData()`,
+// etc. Specifically avoid matching `Response.json(...)` / `NextResponse.json(...)`
+// which are output, not input.
+const BODY_SHAPE_PATTERNS = [
+    { shape: "json", re: /\b(?:req|request)\s*\.\s*json\s*\(/ },
+    { shape: "formData", re: /\b(?:req|request)\s*\.\s*formData\s*\(/ },
+    { shape: "text", re: /\b(?:req|request)\s*\.\s*text\s*\(/ },
+    { shape: "arrayBuffer", re: /\b(?:req|request)\s*\.\s*arrayBuffer\s*\(/ },
+];
+function detectBodyShape(src) {
+    for (const { shape, re } of BODY_SHAPE_PATTERNS) {
+        if (re.test(src))
+            return shape;
+    }
+    return null;
 }
 function segmentToRoute(segment, parent) {
     if (segment.startsWith("(") && segment.endsWith(")"))
@@ -42591,7 +42657,8 @@ function loadOrBuildMap(opts) {
     const cachePath = opts.cachePath ?? (0,external_node_path_namespaceObject.join)(rootDir, ".claudia", "map.json");
     if (!opts.refresh && (0,external_node_fs_namespaceObject.existsSync)(cachePath)) {
         const cached = readMap(cachePath);
-        if (cached && isFresh(cached, rootDir))
+        // Force a rebuild if the cache predates the endpoints field (v0.2.x and older).
+        if (cached && Array.isArray(cached.endpoints) && isFresh(cached, rootDir))
             return cached;
     }
     const map = buildNextMap({ rootDir });
@@ -46734,15 +46801,19 @@ const { HUMAN_PROMPT, AI_PROMPT } = Anthropic;
 ;// CONCATENATED MODULE: ../core/dist/prompt.js
 const SYSTEM_PROMPT = `You are claudia, a diff-aware test planner.
 
-Your job: read a code diff and a route map, then output a structured plan describing which user-facing flows a human tester should exercise to validate the change. You DO NOT execute tests. You produce a plan a reviewer or downstream tool will act on.
+Your job: read a code diff plus a map of the app's routes and API endpoints, then output a structured plan describing which user-facing flows a human tester should exercise to validate the change. You DO NOT execute tests. You produce a plan a reviewer or downstream tool will act on.
 
 Rules:
 - Be specific. Cite changed file paths in your reasoning.
-- Map every changed file to the routes it reaches via the route map. If a file is not in the map, list it under unmappedFiles and explain why it might still matter.
-- Risk levels: "high" = auth, payments, data-mutation, or many routes affected; "medium" = single-route behavior change; "low" = cosmetic, copy, isolated UI.
-- Suggested checks must be concrete user actions ("complete checkout with a saved card", not "test the checkout flow").
+- Map every changed file to the routes AND endpoints it reaches. If a file is not in the map, list it under unmappedFiles and explain why it might still matter.
+- Distinguish API changes from UI changes:
+  - A changed page/component implies a flow on its route(s) — write checks as user actions.
+  - A changed endpoint (route.ts) implies an API contract change — call out the method + path, the request body shape (json/formData/text/etc), and recommend exercising it via the UI flow that hits it OR directly (curl/API client) when no UI flow is implicated.
+- The flow.routes field can contain either page paths ("/checkout") or method-prefixed endpoint paths ("POST /api/bugs/move"). Use whichever fits the change.
+- Risk levels: "high" = auth, payments, data-mutation, schema changes, or many routes/endpoints affected; "medium" = single-route behavior change or additive endpoint; "low" = cosmetic, copy, isolated UI.
+- Suggested checks must be concrete user actions ("complete checkout with a saved card", not "test the checkout flow") or concrete API checks ("POST /api/bugs/move with a valid payload; expect 200 + new bug ref").
 - Set verdict to "skip" only if the diff genuinely cannot affect runtime behavior (already-filtered cases shouldn't reach you, so prefer "test").
-- coverageGaps captures *unmapped risk* — changes you can see have impact but no flow in the map covers them.
+- coverageGaps captures *unmapped risk* — changes you can see have impact but no flow or endpoint in the map covers them.
 - Be terse. The output is read by humans on a PR.`;
 /**
  * Reduce the map to only the routes that the diff actually touches.
@@ -46760,11 +46831,19 @@ function filterMapForDiff(map, diff) {
             diffPaths.add(f.oldPath);
     }
     const implicated = map.routes.filter((r) => r.files.some((file) => diffPaths.has(file)));
-    return { implicated, omittedCount: map.routes.length - implicated.length };
+    const endpoints = map.endpoints ?? [];
+    const implicatedEndpoints = endpoints.filter((e) => diffPaths.has(e.file));
+    return {
+        implicated,
+        omittedCount: map.routes.length - implicated.length,
+        implicatedEndpoints,
+        omittedEndpointCount: endpoints.length - implicatedEndpoints.length,
+    };
 }
 function buildUserMessage(args) {
     const { diff, map, targetUrl } = args;
-    const { implicated, omittedCount } = filterMapForDiff(map, diff);
+    const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount } = filterMapForDiff(map, diff);
+    const totalEndpoints = (map.endpoints ?? []).length;
     const parts = [];
     parts.push(`# Route map (framework: ${map.framework})`);
     if (map.routes.length === 0) {
@@ -46784,6 +46863,27 @@ function buildUserMessage(args) {
         if (omittedCount > 0) {
             parts.push("");
             parts.push(`(${omittedCount} other routes exist in this project but are not affected by this diff.)`);
+        }
+    }
+    parts.push("");
+    parts.push(`# API endpoints`);
+    if (totalEndpoints === 0) {
+        parts.push("(no endpoints discovered)");
+    }
+    else if (implicatedEndpoints.length === 0) {
+        parts.push(`(none of the ${totalEndpoints} known endpoints are touched by this diff)`);
+    }
+    else {
+        parts.push(`Showing ${implicatedEndpoints.length} of ${totalEndpoints} known endpoints — only those whose handler file appears in the diff.`);
+        parts.push("");
+        for (const e of implicatedEndpoints) {
+            const body = e.bodyShape ? ` (body: ${e.bodyShape})` : "";
+            parts.push(`- ${e.method} ${e.path}${body}`);
+            parts.push(`  - ${e.file}`);
+        }
+        if (omittedEndpointCount > 0) {
+            parts.push("");
+            parts.push(`(${omittedEndpointCount} other endpoints exist in this project but are not affected by this diff.)`);
         }
     }
     parts.push("");
@@ -47051,6 +47151,10 @@ function formatMarkdown(result) {
         lines.push("");
         lines.push(`<sub>${model} · in ${usage.inputTokens} (cache write ${usage.cacheCreationTokens} / cache read ${usage.cacheReadTokens}) · out ${usage.outputTokens}</sub>`);
     }
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+    lines.push("<sub>Was this plan useful? React with 👍 or 👎 on this comment. Other reactions are ignored. Run `claudia ratings` to aggregate over time.</sub>");
     return lines.join("\n");
 }
 function formatJson(result) {
@@ -47097,12 +47201,24 @@ async function main() {
         const issue_number = ctx.payload.pull_request.number;
         const existing = await octokit.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
         const prior = existing.data.find((c) => c.body?.includes(STICKY_MARKER));
+        let commentId;
         if (prior) {
-            await octokit.rest.issues.updateComment({ owner, repo, comment_id: prior.id, body });
+            const updated = await octokit.rest.issues.updateComment({ owner, repo, comment_id: prior.id, body });
+            commentId = updated.data.id;
         }
         else {
-            await octokit.rest.issues.createComment({ owner, repo, issue_number, body });
+            const created = await octokit.rest.issues.createComment({ owner, repo, issue_number, body });
+            commentId = created.data.id;
         }
+        // Seed +1 / -1 reactions from the bot so users can click them inline rather
+        // than digging through the reactions picker. Idempotent: GitHub silently
+        // accepts repeated identical reactions from the same user.
+        await octokit.rest.reactions
+            .createForIssueComment({ owner, repo, comment_id: commentId, content: "+1" })
+            .catch(() => { });
+        await octokit.rest.reactions
+            .createForIssueComment({ owner, repo, comment_id: commentId, content: "-1" })
+            .catch(() => { });
     }
 }
 main().catch((err) => {

@@ -39,11 +39,24 @@ async function main(): Promise<void> {
     const existing = await octokit.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
     const prior = existing.data.find((c) => c.body?.includes(STICKY_MARKER));
 
+    let commentId: number;
     if (prior) {
-      await octokit.rest.issues.updateComment({ owner, repo, comment_id: prior.id, body });
+      const updated = await octokit.rest.issues.updateComment({ owner, repo, comment_id: prior.id, body });
+      commentId = updated.data.id;
     } else {
-      await octokit.rest.issues.createComment({ owner, repo, issue_number, body });
+      const created = await octokit.rest.issues.createComment({ owner, repo, issue_number, body });
+      commentId = created.data.id;
     }
+
+    // Seed +1 / -1 reactions from the bot so users can click them inline rather
+    // than digging through the reactions picker. Idempotent: GitHub silently
+    // accepts repeated identical reactions from the same user.
+    await octokit.rest.reactions
+      .createForIssueComment({ owner, repo, comment_id: commentId, content: "+1" })
+      .catch(() => {});
+    await octokit.rest.reactions
+      .createForIssueComment({ owner, repo, comment_id: commentId, content: "-1" })
+      .catch(() => {});
   }
 }
 

@@ -5,6 +5,7 @@ import { writeFileSync } from "node:fs";
 import { loadOrBuildMap, PlannerError, runPlan } from "@claudia/core";
 import { formatJson, formatMarkdown } from "./format.js";
 import { loadConfig } from "./config.js";
+import { aggregateRatings, formatRatings } from "./ratings.js";
 
 const planCmd = defineCommand({
   meta: { name: "plan", description: "Produce a diff-aware test plan" },
@@ -68,9 +69,36 @@ const mapCmd = defineCommand({
   },
 });
 
+const ratingsCmd = defineCommand({
+  meta: { name: "ratings", description: "Aggregate 👍/👎 reactions on claudia comments across a repo's PRs" },
+  args: {
+    repo: { type: "string", required: true, description: "owner/name (e.g. pretorian-worx/runclaudia)" },
+    limit: { type: "string", description: "Max PRs to scan (default 100)" },
+    state: { type: "string", description: "open | closed | all (default all)" },
+    json: { type: "boolean", description: "Emit JSON instead of markdown" },
+  },
+  run({ args }) {
+    const state = args.state as "open" | "closed" | "all" | undefined;
+    if (state && !["open", "closed", "all"].includes(state)) {
+      process.stderr.write(`Invalid --state: ${state}\n`);
+      process.exit(2);
+    }
+    const summary = aggregateRatings({
+      repo: args.repo,
+      limit: args.limit ? parseInt(args.limit, 10) : undefined,
+      state,
+    });
+    if (args.json) {
+      process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
+    } else {
+      process.stdout.write(formatRatings(summary) + "\n");
+    }
+  },
+});
+
 const main = defineCommand({
   meta: { name: "claudia", description: "Diff-aware post-deploy test agent" },
-  subCommands: { plan: planCmd, map: mapCmd },
+  subCommands: { plan: planCmd, map: mapCmd, ratings: ratingsCmd },
 });
 
 runMain(main);

@@ -58,6 +58,11 @@ export function formatMarkdown(result: PlanRunResult): string {
     );
   }
 
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+  lines.push("<sub>Was this plan useful? React with 👍 or 👎 on this comment. Other reactions are ignored. Run `claudia ratings` to aggregate over time.</sub>");
+
   return lines.join("\n");
 }
 
