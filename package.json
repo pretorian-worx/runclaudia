@@ -1,6 +1,6 @@
 {
   "name": "@pretorian-worx/runclaudia",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "description": "Diff-aware post-deploy test agent — v1 plan-only PR advisor",
   "packageManager": "pnpm@9.0.0",

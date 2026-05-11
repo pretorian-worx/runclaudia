@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/pretorian-worx/runclaudia/compare/v0.6.0...v0.7.0) (2026-05-11)
+
+
+### Features
+
+* DB schema awareness (Prisma) ([88f566a](https://github.com/pretorian-worx/runclaudia/commit/88f566a9a17f805bc816860468ab12ccaa142568))
+
 ## [0.6.0](https://github.com/pretorian-worx/runclaudia/compare/v0.5.0...v0.6.0) (2026-05-11)
 
 
