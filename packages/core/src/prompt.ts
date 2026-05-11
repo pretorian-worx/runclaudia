@@ -1,4 +1,4 @@
-import type { AppMap, Diff, EndpointEntry, FileChange, RouteEntry } from "./types.js";
+import type { AppMap, Diff, EndpointEntry, FileChange, InfraEntry, RouteEntry } from "./types.js";
 
 export const SYSTEM_PROMPT = `You are claudia, a diff-aware test planner.
 
@@ -16,6 +16,7 @@ Rules:
 - Suggested checks must be concrete user actions ("complete checkout with a saved card", not "test the checkout flow") or concrete API checks ("POST /api/bugs/move with a valid payload; expect 200 + new bug ref").
 - Set verdict to "skip" only if the diff genuinely cannot affect runtime behavior (already-filtered cases shouldn't reach you, so prefer "test").
 - coverageGaps captures *unmapped risk* — changes you can see have impact but no flow or endpoint in the map covers them.
+- Treat infrastructure changes as production-impact risk. If the diff includes Terraform/CDK resources and any endpoint in the diff touches the same service (per the endpoint's "services" annotation), call out the coordinated risk — e.g. "S3 bucket policy changed AND POST /api/attachments writes to S3, verify the write still succeeds end-to-end."
 - Be terse. The output is read by humans on a PR.`;
 
 /**
@@ -39,6 +40,9 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
   omittedEndpointCount: number;
   /** Endpoints that aren't directly changed, but are called from files in the diff. */
   endpointsCalledByDiff: EndpointCallSite[];
+  /** Infrastructure resources whose declaration file is in the diff. */
+  implicatedInfra: InfraEntry[];
+  omittedInfraCount: number;
 } {
   const diffPaths = new Set<string>();
   for (const f of diff.files) {
@@ -76,19 +80,32 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
   }
   endpointsCalledByDiff.sort((a, b) => a.endpoint.route.localeCompare(b.endpoint.route));
 
+  const infra = map.infra ?? [];
+  const implicatedInfra = infra.filter((r) => diffPaths.has(r.file));
+
   return {
     implicated,
     omittedCount: map.routes.length - implicated.length,
     implicatedEndpoints,
     omittedEndpointCount: endpoints.length - implicatedEndpoints.length,
     endpointsCalledByDiff,
+    implicatedInfra,
+    omittedInfraCount: infra.length - implicatedInfra.length,
   };
 }
 
 export function buildUserMessage(args: { diff: Diff; map: AppMap; targetUrl?: string }): string {
   const { diff, map, targetUrl } = args;
-  const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount, endpointsCalledByDiff } =
-    filterMapForDiff(map, diff);
+  const {
+    implicated,
+    omittedCount,
+    implicatedEndpoints,
+    omittedEndpointCount,
+    endpointsCalledByDiff,
+    implicatedInfra,
+    omittedInfraCount,
+  } = filterMapForDiff(map, diff);
+  const totalInfra = (map.infra ?? []).length;
   const totalEndpoints = (map.endpoints ?? []).length;
   const parts: string[] = [];
 
@@ -120,8 +137,7 @@ export function buildUserMessage(args: { diff: Diff; map: AppMap; targetUrl?: st
     parts.push(`Showing ${implicatedEndpoints.length} of ${totalEndpoints} known endpoints — only those whose handler file appears in the diff.`);
     parts.push("");
     for (const e of implicatedEndpoints) {
-      const body = e.bodyShape ? ` (body: ${e.bodyShape})` : "";
-      parts.push(`- ${e.method} ${e.path}${body}`);
+      parts.push(`- ${e.method} ${e.path}${endpointAnnotations(e)}`);
       parts.push(`  - ${e.file}`);
     }
     if (omittedEndpointCount > 0) {
@@ -140,10 +156,30 @@ export function buildUserMessage(args: { diff: Diff; map: AppMap; targetUrl?: st
     );
     parts.push("");
     for (const site of endpointsCalledByDiff) {
-      const body = site.endpoint.bodyShape ? ` (body: ${site.endpoint.bodyShape})` : "";
-      parts.push(`- ${site.endpoint.method} ${site.endpoint.path}${body}`);
+      parts.push(`- ${site.endpoint.method} ${site.endpoint.path}${endpointAnnotations(site.endpoint)}`);
       parts.push(`  - handler: ${site.endpoint.file}`);
       for (const c of site.callerFiles) parts.push(`  - called by: ${c}`);
+    }
+  }
+
+  parts.push("");
+  parts.push(`# Infrastructure (Terraform)`);
+  if (totalInfra === 0) {
+    parts.push("(no infrastructure resources discovered)");
+  } else if (implicatedInfra.length === 0) {
+    parts.push(`(none of the ${totalInfra} known resources are touched by this diff)`);
+  } else {
+    parts.push(
+      `Showing ${implicatedInfra.length} of ${totalInfra} known resources — only those whose declaration file is in the diff.`,
+    );
+    parts.push("");
+    for (const r of implicatedInfra) {
+      parts.push(`- ${r.address} (${r.tool})`);
+      parts.push(`  - ${r.file}`);
+    }
+    if (omittedInfraCount > 0) {
+      parts.push("");
+      parts.push(`(${omittedInfraCount} other resources exist in this project but are not affected by this diff.)`);
     }
   }
 
@@ -159,6 +195,14 @@ export function buildUserMessage(args: { diff: Diff; map: AppMap; targetUrl?: st
   parts.push("");
   parts.push("Now produce the plan via the emit_plan tool.");
   return parts.join("\n");
+}
+
+function endpointAnnotations(e: EndpointEntry): string {
+  const parts: string[] = [];
+  if (e.bodyShape) parts.push(`body: ${e.bodyShape}`);
+  const services = e.services ?? [];
+  if (services.length > 0) parts.push(`services: ${services.join(", ")}`);
+  return parts.length > 0 ? ` (${parts.join("; ")})` : "";
 }
 
 function renderFile(f: FileChange): string {

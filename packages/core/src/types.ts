@@ -35,6 +35,24 @@ export interface EndpointEntry {
   bodyShape: "json" | "formData" | "text" | "arrayBuffer" | null;
   /** Files statically detected to call this endpoint (fetch/axios/SWR). Best-effort. */
   callers: string[];
+  /**
+   * Cloud services this endpoint touches, inferred from `@aws-sdk/client-*`
+   * imports in the handler source. E.g. ["s3", "dynamodb"]. Best-effort.
+   */
+  services: string[];
+}
+
+export interface InfraEntry {
+  /** IaC tool that defines this resource. */
+  tool: "terraform";
+  /** Terraform resource type, e.g. "aws_s3_bucket". */
+  type: string;
+  /** Local name from the resource declaration, e.g. "attachments". */
+  name: string;
+  /** Address-style identifier, e.g. "aws_s3_bucket.attachments". */
+  address: string;
+  /** File that declares this resource. */
+  file: string;
 }
 
 export interface AppMap {
@@ -43,9 +61,12 @@ export interface AppMap {
   rootDir: string;
   routes: RouteEntry[];
   endpoints: EndpointEntry[];
+  infra: InfraEntry[];
   fileToRoutes: Record<string, string[]>;
   /** Reverse index: file path → endpoint route strings (e.g. "POST /api/bugs") that file calls. */
   fileToEndpoints: Record<string, string[]>;
+  /** Reverse index: file path → infra resource addresses declared in that file. */
+  fileToInfra: Record<string, string[]>;
 }
 
 export const PlanFlowSchema = z.object({

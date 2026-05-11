@@ -15,12 +15,14 @@ export function loadOrBuildMap(opts: MapOptions): AppMap {
 
   if (!opts.refresh && existsSync(cachePath)) {
     const cached = readMap(cachePath);
-    // Force a rebuild if the cache predates the endpoints/fileToEndpoints fields.
+    // Force a rebuild if the cache predates the latest map schema (endpoints,
+    // fileToEndpoints, infra, fileToInfra).
     const hasNewerFields =
       cached &&
       Array.isArray(cached.endpoints) &&
+      Array.isArray(cached.infra) &&
       cached.fileToEndpoints !== undefined &&
-      typeof cached.fileToEndpoints === "object";
+      cached.fileToInfra !== undefined;
     if (hasNewerFields && cached && isFresh(cached, rootDir)) return cached;
   }
 

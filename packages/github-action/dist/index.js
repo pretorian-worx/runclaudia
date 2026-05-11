@@ -42354,7 +42354,91 @@ function parsePatch(out) {
 //# sourceMappingURL=diff.js.map
 ;// CONCATENATED MODULE: external "node:fs"
 const external_node_fs_namespaceObject = require("node:fs");
+;// CONCATENATED MODULE: ../core/dist/adapters/terraform.js
+
+
+const DEFAULT_IGNORE = new Set([
+    "node_modules",
+    ".git",
+    ".next",
+    "dist",
+    "build",
+    ".terraform",
+    ".turbo",
+    "coverage",
+]);
+// `resource "aws_s3_bucket" "attachments" {`  (block opener; we don't parse the body).
+const RESOURCE_RE = /resource\s+"([^"]+)"\s+"([^"]+)"\s*\{/g;
+/**
+ * Walk the project root looking for *.tf files and extract resource declarations.
+ * Regex-based — does not parse HCL fully. Handles 95% of vanilla resource blocks;
+ * misses dynamic blocks, for_each, count, modules, locals, etc.
+ */
+function discoverTerraformResources(opts) {
+    const rootDir = opts.rootDir;
+    const ignore = new Set([...DEFAULT_IGNORE, ...(opts.ignore ?? [])]);
+    const maxDepth = opts.maxDepth ?? 8;
+    const infra = [];
+    const fileToInfra = {};
+    walk(rootDir, rootDir, ignore, maxDepth, infra, fileToInfra);
+    // Stable order — easier to diff cached maps + nicer prompt output.
+    infra.sort((a, b) => a.address.localeCompare(b.address));
+    for (const k of Object.keys(fileToInfra)) {
+        fileToInfra[k] = Array.from(new Set(fileToInfra[k])).sort();
+    }
+    return { infra, fileToInfra };
+}
+function walk(dir, rootDir, ignore, depthLeft, infra, fileToInfra) {
+    if (depthLeft <= 0)
+        return;
+    let entries;
+    try {
+        entries = (0,external_node_fs_namespaceObject.readdirSync)(dir, { withFileTypes: true });
+    }
+    catch {
+        return;
+    }
+    for (const entry of entries) {
+        // Skip dotfiles/dirs entirely. .terraform/.git/etc. are also in DEFAULT_IGNORE
+        // but this catches anything else (.idea, .vscode, etc.).
+        if (entry.name.startsWith("."))
+            continue;
+        const abs = (0,external_node_path_namespaceObject.join)(dir, entry.name);
+        if (entry.isDirectory()) {
+            if (ignore.has(entry.name))
+                continue;
+            walk(abs, rootDir, ignore, depthLeft - 1, infra, fileToInfra);
+            continue;
+        }
+        if (!entry.isFile())
+            continue;
+        if (!entry.name.endsWith(".tf"))
+            continue;
+        const relFile = toRel(rootDir, abs);
+        let src;
+        try {
+            src = (0,external_node_fs_namespaceObject.readFileSync)(abs, "utf8");
+        }
+        catch {
+            continue;
+        }
+        RESOURCE_RE.lastIndex = 0;
+        let m;
+        while ((m = RESOURCE_RE.exec(src))) {
+            const type = m[1];
+            const name = m[2];
+            const address = `${type}.${name}`;
+            infra.push({ tool: "terraform", type, name, address, file: relFile });
+            (fileToInfra[relFile] ??= []).push(address);
+        }
+    }
+}
+function toRel(rootDir, p) {
+    return (0,external_node_path_namespaceObject.relative)(rootDir, p).split(external_node_path_namespaceObject.sep).join("/");
+}
+//# sourceMappingURL=terraform.js.map
 ;// CONCATENATED MODULE: ../core/dist/adapters/nextjs.js
+
 
 
 const ROUTE_FILES = ["page.tsx", "page.ts", "page.jsx", "page.js"];
@@ -42368,7 +42452,7 @@ function buildNextMap(opts) {
     const endpoints = [];
     const fileToRoutes = {};
     if (appDir) {
-        walk(appDir, "", appDir, rootDir, tsPaths, routes, endpoints, fileToRoutes, opts.maxDepth ?? 12);
+        nextjs_walk(appDir, "", appDir, rootDir, tsPaths, routes, endpoints, fileToRoutes, opts.maxDepth ?? 12);
     }
     // Second pass: link endpoints to caller files.
     // We collect every file the reachability walk visited (anything in fileToRoutes
@@ -42396,14 +42480,19 @@ function buildNextMap(opts) {
     }
     for (const e of endpoints)
         e.callers = uniqSorted(e.callers);
+    // Third pass: infrastructure discovery (framework-agnostic — runs at the
+    // project root, not just under appDir).
+    const { infra, fileToInfra } = discoverTerraformResources({ rootDir });
     return {
         framework: "nextjs-app",
         generatedAt: new Date().toISOString(),
         rootDir,
         routes,
         endpoints,
+        infra,
         fileToRoutes,
         fileToEndpoints,
+        fileToInfra,
     };
 }
 function uniqSorted(xs) {
@@ -42446,7 +42535,7 @@ function findAppDir(rootDir) {
     }
     return null;
 }
-function walk(dir, routePath, appRoot, rootDir, tsPaths, routes, endpoints, fileToRoutes, remainingDepth) {
+function nextjs_walk(dir, routePath, appRoot, rootDir, tsPaths, routes, endpoints, fileToRoutes, remainingDepth) {
     if (remainingDepth <= 0)
         return;
     const entries = (0,external_node_fs_namespaceObject.readdirSync)(dir, { withFileTypes: true });
@@ -42461,7 +42550,7 @@ function walk(dir, routePath, appRoot, rootDir, tsPaths, routes, endpoints, file
         for (const layout of layoutFiles) {
             collectReachable(layout, rootDir, tsPaths, reachable, 8);
         }
-        const fileList = [...reachable].map((f) => toRel(rootDir, f)).sort();
+        const fileList = [...reachable].map((f) => nextjs_toRel(rootDir, f)).sort();
         routes.push({ route, files: fileList });
         for (const f of fileList) {
             (fileToRoutes[f] ??= []).push(route);
@@ -42470,9 +42559,9 @@ function walk(dir, routePath, appRoot, rootDir, tsPaths, routes, endpoints, file
     if (endpointFile) {
         const path = routePath || "/";
         const handlerAbs = (0,external_node_path_namespaceObject.join)(dir, endpointFile.name);
-        const relFile = toRel(rootDir, handlerAbs);
+        const relFile = nextjs_toRel(rootDir, handlerAbs);
         const parsed = parseEndpointHandler(handlerAbs);
-        for (const m of parsed) {
+        for (const m of parsed.methods) {
             endpoints.push({
                 route: `${m.method} ${path}`,
                 path,
@@ -42480,9 +42569,10 @@ function walk(dir, routePath, appRoot, rootDir, tsPaths, routes, endpoints, file
                 file: relFile,
                 bodyShape: m.bodyShape,
                 callers: [],
+                services: parsed.services,
             });
         }
-        (fileToRoutes[relFile] ??= []).push(...parsed.map((m) => `${m.method} ${path}`));
+        (fileToRoutes[relFile] ??= []).push(...parsed.methods.map((m) => `${m.method} ${path}`));
     }
     for (const entry of entries) {
         if (!entry.isDirectory())
@@ -42490,7 +42580,7 @@ function walk(dir, routePath, appRoot, rootDir, tsPaths, routes, endpoints, file
         if (entry.name.startsWith("_"))
             continue;
         const childRoute = segmentToRoute(entry.name, routePath);
-        walk((0,external_node_path_namespaceObject.join)(dir, entry.name), childRoute, appRoot, rootDir, tsPaths, routes, endpoints, fileToRoutes, remainingDepth - 1);
+        nextjs_walk((0,external_node_path_namespaceObject.join)(dir, entry.name), childRoute, appRoot, rootDir, tsPaths, routes, endpoints, fileToRoutes, remainingDepth - 1);
     }
 }
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -42500,7 +42590,7 @@ function parseEndpointHandler(file) {
         src = (0,external_node_fs_namespaceObject.readFileSync)(file, "utf8");
     }
     catch {
-        return [];
+        return { methods: [], services: [] };
     }
     // Find each method's declaration position so we can slice its body region.
     const positions = [];
@@ -42512,16 +42602,26 @@ function parseEndpointHandler(file) {
         }
     }
     if (positions.length === 0)
-        return [];
+        return { methods: [], services: detectAwsServices(src) };
     positions.sort((a, b) => a.start - b.start);
-    const out = [];
+    const methods = [];
     for (let i = 0; i < positions.length; i++) {
         const start = positions[i].start;
         const end = i + 1 < positions.length ? positions[i + 1].start : src.length;
         const body = src.slice(start, end);
-        out.push({ method: positions[i].method, bodyShape: detectBodyShape(body) });
+        methods.push({ method: positions[i].method, bodyShape: detectBodyShape(body) });
     }
-    return out;
+    return { methods, services: detectAwsServices(src) };
+}
+const AWS_SDK_IMPORT_RE = /@aws-sdk\/client-([a-z0-9-]+)/gi;
+function detectAwsServices(src) {
+    const services = new Set();
+    AWS_SDK_IMPORT_RE.lastIndex = 0;
+    let m;
+    while ((m = AWS_SDK_IMPORT_RE.exec(src))) {
+        services.add(m[1].toLowerCase());
+    }
+    return Array.from(services).sort();
 }
 // Look only at request-side body parsing — `req.json()`, `await request.formData()`,
 // etc. Specifically avoid matching `Response.json(...)` / `NextResponse.json(...)`
@@ -42674,7 +42774,7 @@ function isUnder(root, p) {
     const r = (0,external_node_path_namespaceObject.relative)(root, p);
     return !r.startsWith("..") && !r.startsWith(external_node_path_namespaceObject.sep + "..");
 }
-function toRel(rootDir, p) {
+function nextjs_toRel(rootDir, p) {
     const r = (0,external_node_path_namespaceObject.relative)(rootDir, p);
     return r.split(external_node_path_namespaceObject.sep).join("/");
 }
@@ -42779,11 +42879,13 @@ function loadOrBuildMap(opts) {
     const cachePath = opts.cachePath ?? (0,external_node_path_namespaceObject.join)(rootDir, ".claudia", "map.json");
     if (!opts.refresh && (0,external_node_fs_namespaceObject.existsSync)(cachePath)) {
         const cached = readMap(cachePath);
-        // Force a rebuild if the cache predates the endpoints/fileToEndpoints fields.
+        // Force a rebuild if the cache predates the latest map schema (endpoints,
+        // fileToEndpoints, infra, fileToInfra).
         const hasNewerFields = cached &&
             Array.isArray(cached.endpoints) &&
+            Array.isArray(cached.infra) &&
             cached.fileToEndpoints !== undefined &&
-            typeof cached.fileToEndpoints === "object";
+            cached.fileToInfra !== undefined;
         if (hasNewerFields && cached && isFresh(cached, rootDir))
             return cached;
     }
@@ -46941,6 +47043,7 @@ Rules:
 - Suggested checks must be concrete user actions ("complete checkout with a saved card", not "test the checkout flow") or concrete API checks ("POST /api/bugs/move with a valid payload; expect 200 + new bug ref").
 - Set verdict to "skip" only if the diff genuinely cannot affect runtime behavior (already-filtered cases shouldn't reach you, so prefer "test").
 - coverageGaps captures *unmapped risk* — changes you can see have impact but no flow or endpoint in the map covers them.
+- Treat infrastructure changes as production-impact risk. If the diff includes Terraform/CDK resources and any endpoint in the diff touches the same service (per the endpoint's "services" annotation), call out the coordinated risk — e.g. "S3 bucket policy changed AND POST /api/attachments writes to S3, verify the write still succeeds end-to-end."
 - Be terse. The output is read by humans on a PR.`;
 function filterMapForDiff(map, diff) {
     const diffPaths = new Set();
@@ -46980,17 +47083,22 @@ function filterMapForDiff(map, diff) {
         });
     }
     endpointsCalledByDiff.sort((a, b) => a.endpoint.route.localeCompare(b.endpoint.route));
+    const infra = map.infra ?? [];
+    const implicatedInfra = infra.filter((r) => diffPaths.has(r.file));
     return {
         implicated,
         omittedCount: map.routes.length - implicated.length,
         implicatedEndpoints,
         omittedEndpointCount: endpoints.length - implicatedEndpoints.length,
         endpointsCalledByDiff,
+        implicatedInfra,
+        omittedInfraCount: infra.length - implicatedInfra.length,
     };
 }
 function buildUserMessage(args) {
     const { diff, map, targetUrl } = args;
-    const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount, endpointsCalledByDiff } = filterMapForDiff(map, diff);
+    const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount, endpointsCalledByDiff, implicatedInfra, omittedInfraCount, } = filterMapForDiff(map, diff);
+    const totalInfra = (map.infra ?? []).length;
     const totalEndpoints = (map.endpoints ?? []).length;
     const parts = [];
     parts.push(`# Route map (framework: ${map.framework})`);
@@ -47025,8 +47133,7 @@ function buildUserMessage(args) {
         parts.push(`Showing ${implicatedEndpoints.length} of ${totalEndpoints} known endpoints — only those whose handler file appears in the diff.`);
         parts.push("");
         for (const e of implicatedEndpoints) {
-            const body = e.bodyShape ? ` (body: ${e.bodyShape})` : "";
-            parts.push(`- ${e.method} ${e.path}${body}`);
+            parts.push(`- ${e.method} ${e.path}${endpointAnnotations(e)}`);
             parts.push(`  - ${e.file}`);
         }
         if (omittedEndpointCount > 0) {
@@ -47043,11 +47150,30 @@ function buildUserMessage(args) {
         parts.push(`Statically detected call sites — when these files change, the contract with the endpoint may be affected.`);
         parts.push("");
         for (const site of endpointsCalledByDiff) {
-            const body = site.endpoint.bodyShape ? ` (body: ${site.endpoint.bodyShape})` : "";
-            parts.push(`- ${site.endpoint.method} ${site.endpoint.path}${body}`);
+            parts.push(`- ${site.endpoint.method} ${site.endpoint.path}${endpointAnnotations(site.endpoint)}`);
             parts.push(`  - handler: ${site.endpoint.file}`);
             for (const c of site.callerFiles)
                 parts.push(`  - called by: ${c}`);
+        }
+    }
+    parts.push("");
+    parts.push(`# Infrastructure (Terraform)`);
+    if (totalInfra === 0) {
+        parts.push("(no infrastructure resources discovered)");
+    }
+    else if (implicatedInfra.length === 0) {
+        parts.push(`(none of the ${totalInfra} known resources are touched by this diff)`);
+    }
+    else {
+        parts.push(`Showing ${implicatedInfra.length} of ${totalInfra} known resources — only those whose declaration file is in the diff.`);
+        parts.push("");
+        for (const r of implicatedInfra) {
+            parts.push(`- ${r.address} (${r.tool})`);
+            parts.push(`  - ${r.file}`);
+        }
+        if (omittedInfraCount > 0) {
+            parts.push("");
+            parts.push(`(${omittedInfraCount} other resources exist in this project but are not affected by this diff.)`);
         }
     }
     parts.push("");
@@ -47061,6 +47187,15 @@ function buildUserMessage(args) {
     parts.push("");
     parts.push("Now produce the plan via the emit_plan tool.");
     return parts.join("\n");
+}
+function endpointAnnotations(e) {
+    const parts = [];
+    if (e.bodyShape)
+        parts.push(`body: ${e.bodyShape}`);
+    const services = e.services ?? [];
+    if (services.length > 0)
+        parts.push(`services: ${services.join(", ")}`);
+    return parts.length > 0 ? ` (${parts.join("; ")})` : "";
 }
 function renderFile(f) {
     const header = `## ${f.status.toUpperCase()} ${f.path}${f.oldPath ? ` (from ${f.oldPath})` : ""}  +${f.additions}/-${f.deletions}${f.binary ? " [binary]" : ""}`;

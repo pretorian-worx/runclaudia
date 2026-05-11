@@ -23,6 +23,7 @@ const ep = (
   file,
   bodyShape: null,
   callers: [],
+  services: [],
 });
 
 describe("detectEndpointCalls", () => {

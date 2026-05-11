@@ -12,13 +12,19 @@ const map: AppMap = {
     { route: "/checkout", files: ["app/checkout/page.tsx", "app/checkout/Button.tsx"] },
   ],
   endpoints: [
-    { route: "GET /api/bugs", path: "/api/bugs", method: "GET", file: "app/api/bugs/route.ts", bodyShape: null, callers: [] },
-    { route: "POST /api/bugs", path: "/api/bugs", method: "POST", file: "app/api/bugs/route.ts", bodyShape: "json", callers: ["app/checkout/Button.tsx"] },
-    { route: "POST /api/upload", path: "/api/upload", method: "POST", file: "app/api/upload/route.ts", bodyShape: "formData", callers: [] },
+    { route: "GET /api/bugs", path: "/api/bugs", method: "GET", file: "app/api/bugs/route.ts", bodyShape: null, callers: [], services: [] },
+    { route: "POST /api/bugs", path: "/api/bugs", method: "POST", file: "app/api/bugs/route.ts", bodyShape: "json", callers: ["app/checkout/Button.tsx"], services: [] },
+    { route: "POST /api/upload", path: "/api/upload", method: "POST", file: "app/api/upload/route.ts", bodyShape: "formData", callers: [], services: ["s3"] },
+  ],
+  infra: [
+    { tool: "terraform", type: "aws_s3_bucket", name: "uploads", address: "aws_s3_bucket.uploads", file: "infra/s3.tf" },
   ],
   fileToRoutes: {},
   fileToEndpoints: {
     "app/checkout/Button.tsx": ["POST /api/bugs"],
+  },
+  fileToInfra: {
+    "infra/s3.tf": ["aws_s3_bucket.uploads"],
   },
 };
 
@@ -137,5 +143,39 @@ describe("buildUserMessage with endpoint callers", () => {
     expect(msg).toContain("# Endpoints called by changed files");
     expect(msg).toContain("POST /api/bugs");
     expect(msg).toContain("called by: app/checkout/Button.tsx");
+  });
+});
+
+describe("filterMapForDiff infra", () => {
+  it("surfaces infra resources whose .tf file is in the diff", () => {
+    const result = filterMapForDiff(map, diff(["infra/s3.tf"]));
+    expect(result.implicatedInfra.map((r) => r.address)).toEqual(["aws_s3_bucket.uploads"]);
+    expect(result.omittedInfraCount).toBe(0);
+  });
+
+  it("leaves infra empty when no .tf files are in the diff", () => {
+    const result = filterMapForDiff(map, diff(["app/checkout/Button.tsx"]));
+    expect(result.implicatedInfra).toEqual([]);
+    expect(result.omittedInfraCount).toBe(1);
+  });
+});
+
+describe("buildUserMessage infra + services rendering", () => {
+  it("renders infra section with the implicated resource", () => {
+    const msg = buildUserMessage({ diff: diff(["infra/s3.tf"]), map });
+    expect(msg).toContain("# Infrastructure (Terraform)");
+    expect(msg).toContain("aws_s3_bucket.uploads");
+    expect(msg).toContain("infra/s3.tf");
+  });
+
+  it("annotates endpoints with their detected AWS services", () => {
+    const msg = buildUserMessage({ diff: diff(["app/api/upload/route.ts"]), map });
+    expect(msg).toContain("POST /api/upload");
+    expect(msg).toContain("services: s3");
+  });
+
+  it("notes when no infrastructure is touched", () => {
+    const msg = buildUserMessage({ diff: diff(["app/checkout/Button.tsx"]), map });
+    expect(msg).toContain("none of the 1 known resources are touched by this diff");
   });
 });

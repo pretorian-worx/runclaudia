@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { AppMap, EndpointEntry, HttpMethod, RouteEntry } from "../types.js";
+import { discoverTerraformResources } from "./terraform.js";
 
 export interface NextAdapterOptions {
   rootDir: string;
@@ -48,14 +49,20 @@ export function buildNextMap(opts: NextAdapterOptions): AppMap {
   }
   for (const e of endpoints) e.callers = uniqSorted(e.callers);
 
+  // Third pass: infrastructure discovery (framework-agnostic — runs at the
+  // project root, not just under appDir).
+  const { infra, fileToInfra } = discoverTerraformResources({ rootDir });
+
   return {
     framework: "nextjs-app",
     generatedAt: new Date().toISOString(),
     rootDir,
     routes,
     endpoints,
+    infra,
     fileToRoutes,
     fileToEndpoints,
+    fileToInfra,
   };
 }
 
@@ -147,7 +154,7 @@ function walk(
     const handlerAbs = join(dir, endpointFile.name);
     const relFile = toRel(rootDir, handlerAbs);
     const parsed = parseEndpointHandler(handlerAbs);
-    for (const m of parsed) {
+    for (const m of parsed.methods) {
       endpoints.push({
         route: `${m.method} ${path}`,
         path,
@@ -155,9 +162,10 @@ function walk(
         file: relFile,
         bodyShape: m.bodyShape,
         callers: [],
+        services: parsed.services,
       });
     }
-    (fileToRoutes[relFile] ??= []).push(...parsed.map((m) => `${m.method} ${path}`));
+    (fileToRoutes[relFile] ??= []).push(...parsed.methods.map((m) => `${m.method} ${path}`));
   }
 
   for (const entry of entries) {
@@ -175,12 +183,18 @@ interface ParsedMethod {
   bodyShape: EndpointEntry["bodyShape"];
 }
 
-function parseEndpointHandler(file: string): ParsedMethod[] {
+interface ParsedHandler {
+  methods: ParsedMethod[];
+  /** Cloud service codes detected from @aws-sdk/client-* imports, e.g. ["s3"]. */
+  services: string[];
+}
+
+function parseEndpointHandler(file: string): ParsedHandler {
   let src: string;
   try {
     src = readFileSync(file, "utf8");
   } catch {
-    return [];
+    return { methods: [], services: [] };
   }
 
   // Find each method's declaration position so we can slice its body region.
@@ -195,18 +209,30 @@ function parseEndpointHandler(file: string): ParsedMethod[] {
       positions.push({ method: m, start: match.index });
     }
   }
-  if (positions.length === 0) return [];
+  if (positions.length === 0) return { methods: [], services: detectAwsServices(src) };
 
   positions.sort((a, b) => a.start - b.start);
 
-  const out: ParsedMethod[] = [];
+  const methods: ParsedMethod[] = [];
   for (let i = 0; i < positions.length; i++) {
     const start = positions[i]!.start;
     const end = i + 1 < positions.length ? positions[i + 1]!.start : src.length;
     const body = src.slice(start, end);
-    out.push({ method: positions[i]!.method, bodyShape: detectBodyShape(body) });
+    methods.push({ method: positions[i]!.method, bodyShape: detectBodyShape(body) });
   }
-  return out;
+  return { methods, services: detectAwsServices(src) };
+}
+
+const AWS_SDK_IMPORT_RE = /@aws-sdk\/client-([a-z0-9-]+)/gi;
+
+export function detectAwsServices(src: string): string[] {
+  const services = new Set<string>();
+  AWS_SDK_IMPORT_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = AWS_SDK_IMPORT_RE.exec(src))) {
+    services.add(m[1]!.toLowerCase());
+  }
+  return Array.from(services).sort();
 }
 
 // Look only at request-side body parsing — `req.json()`, `await request.formData()`,
