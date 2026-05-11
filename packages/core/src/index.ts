@@ -10,3 +10,10 @@ export { decideGating } from "./gating.js";
 export type { GatingDecision, GatingMode, GatingOptions, RiskLevel } from "./gating.js";
 export { runSelect, formatSelectionMarkdown } from "./select.js";
 export type { SelectOptions, SelectionResult, SelectedSpec } from "./select.js";
+export { buildPlaywrightCommand, parsePlaywrightReport, formatRunMarkdown } from "./runner.js";
+export type {
+  RunCommandOptions,
+  PlaywrightCommand,
+  PlaywrightReport,
+  FailedTest,
+} from "./runner.js";

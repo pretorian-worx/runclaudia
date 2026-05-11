@@ -158,9 +158,43 @@ jobs:
         run: npx playwright test --grep "${{ steps.select.outputs.grep }}"
 ```
 
-Claudia handles the **selection** (which specs to run, given the diff). Your existing Playwright config handles **execution** (auth, base URL, reporting). Auth and runtime are intentionally outside v0.9 — they're well-served by what you've already wired up for pre-deploy CI.
+Claudia handles the **selection** (which specs to run, given the diff). Your existing Playwright config handles **execution** (auth, base URL, reporting).
 
-A future release will bundle execution + auth recipes + a Slack reporter, but the selection primitive works standalone today.
+### Or: let claudia run them too — `claudia run`
+
+`claudia run` bundles selection + execution into a single command. It calls `claudia select` internally, then spawns `npx playwright test` with the selected files/grep, `PLAYWRIGHT_BASE_URL` set to your target, and Playwright's JSON reporter wired up for a structured summary:
+
+```bash
+claudia run \
+  --base $LAST_DEPLOY_SHA \
+  --head $JUST_DEPLOYED_SHA \
+  --target https://app.example.com \
+  [--playwright-config playwright.prod.config.ts] \
+  [--json] [--dry-run]
+```
+
+Output (markdown):
+
+```
+## claudia — post-deploy verification
+Target: `https://app.example.com`
+
+**✅ Pass** — 4/4 passed.  ⏱ 12.3s
+```
+
+…or on failure:
+
+```
+**❌ Fail** — 3/4 passed, 0 flaky.  ⏱ 14.1s
+
+### Failures
+
+**e2e/bugs.spec.ts** — `lists bugs`
+```
+
+`npx playwright test` runs in the project's normal Playwright environment, so auth handled by your existing `playwright.config.ts` (e.g. global setup, storage state, login fixtures) Just Works. Claudia doesn't replace your auth setup — it reuses it.
+
+A future release will add pluggable auth recipes (Clerk/Auth0/NextAuth/Supabase/Cognito starters) and a Slack reporter; until then teams with auth already wired for pre-deploy E2E can adopt `claudia run` today by pointing it at production.
 
 ## Status
 

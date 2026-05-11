@@ -2,9 +2,16 @@
 import { defineCommand, runMain } from "citty";
 import { resolve } from "node:path";
 import { writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  buildPlaywrightCommand,
+  formatRunMarkdown,
   formatSelectionMarkdown,
   loadOrBuildMap,
+  parsePlaywrightReport,
   PlannerError,
   runPlan,
   runSelect,
@@ -123,6 +130,102 @@ const selectCmd = defineCommand({
   },
 });
 
+const runCmd = defineCommand({
+  meta: {
+    name: "run",
+    description:
+      "Select + execute Playwright specs covering the diff against a deployed target URL. Intended for post-deploy verification workflows.",
+  },
+  args: {
+    base: { type: "string", required: true, description: "Base ref (the last-deployed SHA)" },
+    head: { type: "string", default: "HEAD", description: "Head ref (the just-deployed SHA)" },
+    target: { type: "string", required: true, description: "Deployed URL to run specs against (PLAYWRIGHT_BASE_URL)" },
+    cwd: { type: "string", description: "Project root directory" },
+    "playwright-config": { type: "string", description: "Path to Playwright config file" },
+    "refresh-map": { type: "boolean", description: "Force a fresh map build" },
+    json: { type: "boolean", description: "Emit JSON summary instead of markdown" },
+    "dry-run": { type: "boolean", description: "Print the command that would run; don't spawn it" },
+  },
+  async run({ args }) {
+    const rootDir = resolve(args.cwd ?? process.cwd());
+    const selection = runSelect({
+      rootDir,
+      base: args.base,
+      head: args.head,
+      refreshMap: Boolean(args["refresh-map"]),
+    });
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "claudia-run-"));
+    const jsonReportPath = join(tmpDir, "report.json");
+
+    const cmd = buildPlaywrightCommand({
+      selection,
+      target: args.target,
+      playwrightConfig: args["playwright-config"],
+      jsonReportPath,
+    });
+
+    if (!cmd) {
+      const md = formatRunMarkdown({
+        selection,
+        report: null,
+        target: args.target,
+        nothingToRun: true,
+      });
+      if (args.json) {
+        process.stdout.write(JSON.stringify({ status: "nothing-to-run", selection }, null, 2) + "\n");
+      } else {
+        process.stdout.write(md + "\n");
+      }
+      return;
+    }
+
+    if (args["dry-run"]) {
+      process.stdout.write(`${cmd.command} ${cmd.args.join(" ")}\n`);
+      for (const [k, v] of Object.entries(cmd.env)) process.stdout.write(`  ${k}=${v}\n`);
+      return;
+    }
+
+    process.stderr.write(`claudia: running ${cmd.command} ${cmd.args.join(" ")}\n`);
+
+    const child = spawn(cmd.command, cmd.args, {
+      cwd: rootDir,
+      env: { ...process.env, ...cmd.env },
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+
+    const exitCode: number = await new Promise((resolveCode) => {
+      child.on("close", (code) => resolveCode(code ?? 1));
+      child.on("error", (err) => {
+        process.stderr.write(`claudia: failed to spawn Playwright: ${err.message}\n`);
+        resolveCode(127);
+      });
+    });
+
+    let report = null;
+    if (existsSync(jsonReportPath)) {
+      try {
+        const raw = JSON.parse(readFileSync(jsonReportPath, "utf8"));
+        report = parsePlaywrightReport(raw);
+      } catch (err) {
+        process.stderr.write(`claudia: could not parse Playwright JSON report (${err instanceof Error ? err.message : String(err)})\n`);
+      }
+    }
+
+    if (args.json) {
+      process.stdout.write(
+        JSON.stringify({ status: report ? "completed" : "no-report", exitCode, report }, null, 2) + "\n",
+      );
+    } else {
+      process.stdout.write(
+        formatRunMarkdown({ selection, report, target: args.target, nothingToRun: false }) + "\n",
+      );
+    }
+
+    process.exit(exitCode);
+  },
+});
+
 const ratingsCmd = defineCommand({
   meta: { name: "ratings", description: "Aggregate 👍/👎 reactions on claudia comments across a repo's PRs" },
   args: {
@@ -152,7 +255,7 @@ const ratingsCmd = defineCommand({
 
 const main = defineCommand({
   meta: { name: "claudia", description: "Diff-aware post-deploy test agent" },
-  subCommands: { plan: planCmd, map: mapCmd, select: selectCmd, ratings: ratingsCmd },
+  subCommands: { plan: planCmd, map: mapCmd, select: selectCmd, run: runCmd, ratings: ratingsCmd },
 });
 
 runMain(main);
