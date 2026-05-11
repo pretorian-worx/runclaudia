@@ -10,30 +10,20 @@ Most teams ship code and skip the manual post-deploy check. Full E2E suites are 
 
 ## Install
 
-The CLI is published to **GitHub Packages** (not npm). In a GitHub Actions workflow:
+Run via `npx` — no install, no auth setup:
 
-```yaml
-- uses: actions/setup-node@v4
-  with:
-    node-version: 20
-    registry-url: 'https://npm.pkg.github.com'
-    scope: '@pretorian-worx'
-
-- run: npx -y @pretorian-worx/runclaudia-cli <subcommand> [args]
-  env:
-    NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```bash
+npx -y @pretorian-worx/runclaudia-cli <subcommand> [args]
 ```
 
 `claudia plan` requires `ANTHROPIC_API_KEY` in the environment. All other subcommands (`map`, `select`, `run`, `ratings`) are deterministic local code — zero API calls.
 
-Locally, add to `~/.npmrc`:
+For global install:
 
+```bash
+npm i -g @pretorian-worx/runclaudia-cli
+claudia <subcommand> [args]
 ```
-@pretorian-worx:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=<your-PAT-with-read:packages>
-```
-
-Then `npx -y @pretorian-worx/runclaudia-cli ...`.
 
 ## Usage
 

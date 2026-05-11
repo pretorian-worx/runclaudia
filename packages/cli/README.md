@@ -4,38 +4,13 @@ The CLI for [claudia](https://github.com/pretorian-worx/runclaudia) — a diff-a
 
 ## Install
 
-This package is published to **GitHub Packages**, not the public npm registry. Consumers need to point npm at the GitHub Packages registry for the `@pretorian-worx` scope and authenticate with a GitHub token. Even public GitHub Packages require auth to install.
-
-### In GitHub Actions (typical case)
-
-Use `actions/setup-node` to set up the registry, then invoke via `npx`. The default `GITHUB_TOKEN` works:
-
-```yaml
-- uses: actions/setup-node@v4
-  with:
-    node-version: 20
-    registry-url: 'https://npm.pkg.github.com'
-    scope: '@pretorian-worx'
-
-- run: npx -y @pretorian-worx/runclaudia-cli <subcommand> [args]
-  env:
-    NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-### Locally
-
-Add this to `~/.npmrc` (or a project-local `.npmrc`):
-
-```
-@pretorian-worx:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=YOUR_GITHUB_PAT
-```
-
-The PAT needs `read:packages` scope. Then:
-
 ```bash
 npx -y @pretorian-worx/runclaudia-cli <subcommand> [args]
-# or globally:
+```
+
+Or globally:
+
+```bash
 npm i -g @pretorian-worx/runclaudia-cli
 claudia <subcommand> [args]
 ```
