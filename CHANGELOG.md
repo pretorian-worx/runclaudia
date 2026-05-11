@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/pretorian-worx/runclaudia/compare/v0.9.0...v0.10.0) (2026-05-11)
+
+
+### Features
+
+* post-run reporters for claudia run — step summary, PR back-comment, Slack ([357742e](https://github.com/pretorian-worx/runclaudia/commit/357742eed6bf2acc81ee0a705b92e7d3314a22db))
+
 ## [0.9.0](https://github.com/pretorian-worx/runclaudia/compare/v0.8.0...v0.9.0) (2026-05-11)
 
 
