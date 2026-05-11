@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/pretorian-worx/runclaudia/compare/v0.3.0...v0.4.0) (2026-05-11)
+
+
+### Features
+
+* trust gradient — shadow / advisory / gating modes ([321c0a7](https://github.com/pretorian-worx/runclaudia/commit/321c0a779a4fd7fbecbcf0a8d49f2364dc0fd05e))
+
 ## [0.3.0](https://github.com/pretorian-worx/runclaudia/compare/v0.2.0...v0.3.0) (2026-05-11)
 
 
