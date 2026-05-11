@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/pretorian-worx/runclaudia/compare/v0.4.0...v0.5.0) (2026-05-11)
+
+
+### Features
+
+* component → endpoint linkage via static call detection ([d453e7c](https://github.com/pretorian-worx/runclaudia/commit/d453e7c68a1e21a272902673ba4f8703c8c79727))
+
 ## [0.4.0](https://github.com/pretorian-worx/runclaudia/compare/v0.3.0...v0.4.0) (2026-05-11)
 
 
