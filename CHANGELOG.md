@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/pretorian-worx/runclaudia/compare/v0.2.0...v0.3.0) (2026-05-11)
+
+
+### Features
+
+* add plan rating mechanism + claudia ratings CLI ([f612715](https://github.com/pretorian-worx/runclaudia/commit/f612715b6ffb76c35e2601e2b398af71be0b0f6a))
+* discover Next.js App Router API endpoints in the map ([56c13f7](https://github.com/pretorian-worx/runclaudia/commit/56c13f72d9506ee54b975e0188d15ec6dab869f9))
+
 ## [0.2.0](https://github.com/pretorian-worx/runclaudia/compare/v0.1.0...v0.2.0) (2026-05-11)
 
 
