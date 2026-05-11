@@ -2,7 +2,7 @@
 import { defineCommand, runMain } from "citty";
 import { resolve } from "node:path";
 import { writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ import {
 import { formatJson, formatMarkdown } from "./format.js";
 import { loadConfig } from "./config.js";
 import { aggregateRatings, formatRatings } from "./ratings.js";
+import { dispatchReporters } from "./reporters.js";
 
 const planCmd = defineCommand({
   meta: { name: "plan", description: "Produce a diff-aware test plan" },
@@ -145,6 +146,18 @@ const runCmd = defineCommand({
     "refresh-map": { type: "boolean", description: "Force a fresh map build" },
     json: { type: "boolean", description: "Emit JSON summary instead of markdown" },
     "dry-run": { type: "boolean", description: "Print the command that would run; don't spawn it" },
+    "slack-webhook": {
+      type: "string",
+      description: "Slack incoming-webhook URL to POST the result to (or set CLAUDIA_SLACK_WEBHOOK)",
+    },
+    "no-step-summary": {
+      type: "boolean",
+      description: "Disable auto-writing to $GITHUB_STEP_SUMMARY when running in GitHub Actions",
+    },
+    "no-pr-comment": {
+      type: "boolean",
+      description: "Disable posting a sticky comment back to the merged PR for this SHA",
+    },
   },
   async run({ args }) {
     const rootDir = resolve(args.cwd ?? process.cwd());
@@ -212,19 +225,47 @@ const runCmd = defineCommand({
       }
     }
 
+    const markdown = formatRunMarkdown({
+      selection,
+      report,
+      target: args.target,
+      nothingToRun: false,
+    });
+
     if (args.json) {
       process.stdout.write(
         JSON.stringify({ status: report ? "completed" : "no-report", exitCode, report }, null, 2) + "\n",
       );
     } else {
-      process.stdout.write(
-        formatRunMarkdown({ selection, report, target: args.target, nothingToRun: false }) + "\n",
-      );
+      process.stdout.write(markdown + "\n");
     }
+
+    // Resolve the SHA we just verified so reporters can find the originating PR.
+    const headSha = resolveSha(rootDir, args.head);
+    await dispatchReporters(
+      {
+        markdown,
+        headSha,
+        passed: report ? report.failed === 0 : exitCode === 0,
+      },
+      {
+        slackWebhook: args["slack-webhook"],
+        disableStepSummary: Boolean(args["no-step-summary"]),
+        disablePrComment: Boolean(args["no-pr-comment"]),
+      },
+    );
 
     process.exit(exitCode);
   },
 });
+
+function resolveSha(cwd: string, ref: string): string {
+  try {
+    return execFileSync("git", ["rev-parse", ref], { cwd, encoding: "utf8" }).trim();
+  } catch {
+    return ref;
+  }
+}
 
 const ratingsCmd = defineCommand({
   meta: { name: "ratings", description: "Aggregate 👍/👎 reactions on claudia comments across a repo's PRs" },

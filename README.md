@@ -194,7 +194,21 @@ Target: `https://app.example.com`
 
 `npx playwright test` runs in the project's normal Playwright environment, so auth handled by your existing `playwright.config.ts` (e.g. global setup, storage state, login fixtures) Just Works. Claudia doesn't replace your auth setup — it reuses it.
 
-A future release will add pluggable auth recipes (Clerk/Auth0/NextAuth/Supabase/Cognito starters) and a Slack reporter; until then teams with auth already wired for pre-deploy E2E can adopt `claudia run` today by pointing it at production.
+A future release will add pluggable auth recipes (Clerk/Auth0/NextAuth/Supabase/Cognito starters); until then teams with auth already wired for pre-deploy E2E can adopt `claudia run` today by pointing it at production.
+
+### Where the result surfaces
+
+`claudia run` auto-detects reporting destinations from context. All three skip silently when not applicable:
+
+| Destination | When it fires |
+|---|---|
+| **`$GITHUB_STEP_SUMMARY`** | Inside GitHub Actions. Markdown report appears in the workflow run's Summary tab. |
+| **Sticky PR comment** on the merged PR | `GITHUB_REPOSITORY` set + the deployed SHA has an associated PR. The PR grows a `<!-- claudia:verify -->` sticky comment that updates in place on subsequent deploys. |
+| **Slack** | `--slack-webhook <url>` flag or `CLAUDIA_SLACK_WEBHOOK` env. POSTs the markdown to an incoming webhook. |
+
+Disable individually with `--no-step-summary` / `--no-pr-comment`, or omit the Slack flag/env.
+
+**Why PR back-comments matter for merge-to-main flows:** even when deploys happen post-merge (so there's no open PR at deploy time), the merged PR remains the durable record of the change. claudia finds it via `GET /repos/{owner}/{repo}/commits/{sha}/pulls` and posts the verification result there — closing the loop without requiring an open PR.
 
 ## Status
 
