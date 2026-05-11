@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/pretorian-worx/runclaudia/compare/v0.11.0...v0.12.0) (2026-05-11)
+
+
+### Features
+
+* publish to public npm registry ([192aa6b](https://github.com/pretorian-worx/runclaudia/commit/192aa6b687db12823d9331a1a75597d8f4e2e31a))
+
 ## [0.11.0](https://github.com/pretorian-worx/runclaudia/compare/v0.10.0...v0.11.0) (2026-05-11)
 
 
