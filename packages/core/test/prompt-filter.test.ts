@@ -12,11 +12,14 @@ const map: AppMap = {
     { route: "/checkout", files: ["app/checkout/page.tsx", "app/checkout/Button.tsx"] },
   ],
   endpoints: [
-    { route: "GET /api/bugs", path: "/api/bugs", method: "GET", file: "app/api/bugs/route.ts", bodyShape: null },
-    { route: "POST /api/bugs", path: "/api/bugs", method: "POST", file: "app/api/bugs/route.ts", bodyShape: "json" },
-    { route: "POST /api/upload", path: "/api/upload", method: "POST", file: "app/api/upload/route.ts", bodyShape: "formData" },
+    { route: "GET /api/bugs", path: "/api/bugs", method: "GET", file: "app/api/bugs/route.ts", bodyShape: null, callers: [] },
+    { route: "POST /api/bugs", path: "/api/bugs", method: "POST", file: "app/api/bugs/route.ts", bodyShape: "json", callers: ["app/checkout/Button.tsx"] },
+    { route: "POST /api/upload", path: "/api/upload", method: "POST", file: "app/api/upload/route.ts", bodyShape: "formData", callers: [] },
   ],
   fileToRoutes: {},
+  fileToEndpoints: {
+    "app/checkout/Button.tsx": ["POST /api/bugs"],
+  },
 };
 
 function diff(paths: string[]): Diff {
@@ -111,5 +114,28 @@ describe("filterMapForDiff endpoints", () => {
     const result = filterMapForDiff(map, diff(["app/api/bugs/route.ts"]));
     expect(result.implicatedEndpoints.map((e) => e.route).sort()).toEqual(["GET /api/bugs", "POST /api/bugs"]);
     expect(result.omittedEndpointCount).toBe(1);
+  });
+
+  it("surfaces endpoints called by changed files even when the handler isn't in the diff", () => {
+    const result = filterMapForDiff(map, diff(["app/checkout/Button.tsx"]));
+    expect(result.endpointsCalledByDiff).toHaveLength(1);
+    expect(result.endpointsCalledByDiff[0]!.endpoint.route).toBe("POST /api/bugs");
+    expect(result.endpointsCalledByDiff[0]!.callerFiles).toEqual(["app/checkout/Button.tsx"]);
+  });
+
+  it("does not double-count endpoints whose handler is also in the diff", () => {
+    const result = filterMapForDiff(map, diff(["app/checkout/Button.tsx", "app/api/bugs/route.ts"]));
+    expect(result.implicatedEndpoints.map((e) => e.route).sort()).toEqual(["GET /api/bugs", "POST /api/bugs"]);
+    // POST /api/bugs is already direct; don't re-list it as an indirect call.
+    expect(result.endpointsCalledByDiff).toHaveLength(0);
+  });
+});
+
+describe("buildUserMessage with endpoint callers", () => {
+  it("renders the 'Endpoints called by changed files' section when a caller is in the diff", () => {
+    const msg = buildUserMessage({ diff: diff(["app/checkout/Button.tsx"]), map });
+    expect(msg).toContain("# Endpoints called by changed files");
+    expect(msg).toContain("POST /api/bugs");
+    expect(msg).toContain("called by: app/checkout/Button.tsx");
   });
 });

@@ -10,6 +10,7 @@ Rules:
 - Distinguish API changes from UI changes:
   - A changed page/component implies a flow on its route(s) — write checks as user actions.
   - A changed endpoint (route.ts) implies an API contract change — call out the method + path, the request body shape (json/formData/text/etc), and recommend exercising it via the UI flow that hits it OR directly (curl/API client) when no UI flow is implicated.
+  - A changed component that *calls* an endpoint (statically detected — see "Endpoints called by changed files" below) implies a full-stack flow: the UI change AND the contract between UI and that endpoint. Verify the end-to-end roundtrip, not just the rendered output.
 - The flow.routes field can contain either page paths ("/checkout") or method-prefixed endpoint paths ("POST /api/bugs/move"). Use whichever fits the change.
 - Risk levels: "high" = auth, payments, data-mutation, schema changes, or many routes/endpoints affected; "medium" = single-route behavior change or additive endpoint; "low" = cosmetic, copy, isolated UI.
 - Suggested checks must be concrete user actions ("complete checkout with a saved card", not "test the checkout flow") or concrete API checks ("POST /api/bugs/move with a valid payload; expect 200 + new bug ref").
@@ -25,11 +26,19 @@ Rules:
  * A route is "implicated" if any of its tracked files appears in the diff
  * (matching either the post-image path or, for renames, the pre-image path).
  */
+export interface EndpointCallSite {
+  endpoint: EndpointEntry;
+  /** Files in the diff that statically call this endpoint. */
+  callerFiles: string[];
+}
+
 export function filterMapForDiff(map: AppMap, diff: Diff): {
   implicated: RouteEntry[];
   omittedCount: number;
   implicatedEndpoints: EndpointEntry[];
   omittedEndpointCount: number;
+  /** Endpoints that aren't directly changed, but are called from files in the diff. */
+  endpointsCalledByDiff: EndpointCallSite[];
 } {
   const diffPaths = new Set<string>();
   for (const f of diff.files) {
@@ -39,20 +48,47 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
   const implicated = map.routes.filter((r) => r.files.some((file) => diffPaths.has(file)));
   const endpoints = map.endpoints ?? [];
   const implicatedEndpoints = endpoints.filter((e) => diffPaths.has(e.file));
+
+  // Indirect linkage: a changed file calls an endpoint whose handler isn't itself
+  // in the diff. We want the brain to consider the contract between the UI and
+  // that endpoint as part of the flow.
+  const fileToEndpoints = map.fileToEndpoints ?? {};
+  const directlyChangedRoutes = new Set(implicatedEndpoints.map((e) => e.route));
+  const calledRouteToCallers = new Map<string, string[]>();
+  for (const file of diffPaths) {
+    const calls = fileToEndpoints[file] ?? [];
+    for (const route of calls) {
+      if (directlyChangedRoutes.has(route)) continue;
+      const list = calledRouteToCallers.get(route) ?? [];
+      list.push(file);
+      calledRouteToCallers.set(route, list);
+    }
+  }
+  const endpointsByRoute = new Map(endpoints.map((e) => [e.route, e]));
+  const endpointsCalledByDiff: EndpointCallSite[] = [];
+  for (const [route, callerFiles] of calledRouteToCallers) {
+    const endpoint = endpointsByRoute.get(route);
+    if (!endpoint) continue;
+    endpointsCalledByDiff.push({
+      endpoint,
+      callerFiles: Array.from(new Set(callerFiles)).sort(),
+    });
+  }
+  endpointsCalledByDiff.sort((a, b) => a.endpoint.route.localeCompare(b.endpoint.route));
+
   return {
     implicated,
     omittedCount: map.routes.length - implicated.length,
     implicatedEndpoints,
     omittedEndpointCount: endpoints.length - implicatedEndpoints.length,
+    endpointsCalledByDiff,
   };
 }
 
 export function buildUserMessage(args: { diff: Diff; map: AppMap; targetUrl?: string }): string {
   const { diff, map, targetUrl } = args;
-  const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount } = filterMapForDiff(
-    map,
-    diff,
-  );
+  const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount, endpointsCalledByDiff } =
+    filterMapForDiff(map, diff);
   const totalEndpoints = (map.endpoints ?? []).length;
   const parts: string[] = [];
 
@@ -91,6 +127,23 @@ export function buildUserMessage(args: { diff: Diff; map: AppMap; targetUrl?: st
     if (omittedEndpointCount > 0) {
       parts.push("");
       parts.push(`(${omittedEndpointCount} other endpoints exist in this project but are not affected by this diff.)`);
+    }
+  }
+
+  parts.push("");
+  parts.push(`# Endpoints called by changed files`);
+  if (endpointsCalledByDiff.length === 0) {
+    parts.push("(no static call sites detected from files in this diff)");
+  } else {
+    parts.push(
+      `Statically detected call sites — when these files change, the contract with the endpoint may be affected.`,
+    );
+    parts.push("");
+    for (const site of endpointsCalledByDiff) {
+      const body = site.endpoint.bodyShape ? ` (body: ${site.endpoint.bodyShape})` : "";
+      parts.push(`- ${site.endpoint.method} ${site.endpoint.path}${body}`);
+      parts.push(`  - handler: ${site.endpoint.file}`);
+      for (const c of site.callerFiles) parts.push(`  - called by: ${c}`);
     }
   }
 

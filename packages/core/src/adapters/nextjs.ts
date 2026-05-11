@@ -24,6 +24,30 @@ export function buildNextMap(opts: NextAdapterOptions): AppMap {
     walk(appDir, "", appDir, rootDir, tsPaths, routes, endpoints, fileToRoutes, opts.maxDepth ?? 12);
   }
 
+  // Second pass: link endpoints to caller files.
+  // We collect every file the reachability walk visited (anything in fileToRoutes
+  // is by definition reachable from at least one route, plus the endpoint handler
+  // files themselves are also caller-eligible).
+  const fileToEndpoints: Record<string, string[]> = {};
+  for (const e of endpoints) e.callers = [];
+
+  const callerFiles = new Set<string>(Object.keys(fileToRoutes));
+  for (const file of callerFiles) {
+    const calls = detectEndpointCalls(join(rootDir, file));
+    if (calls.length === 0) continue;
+    for (const call of calls) {
+      const matched = matchEndpoint(call, endpoints);
+      for (const m of matched) {
+        if (!m.callers.includes(file)) m.callers.push(file);
+        (fileToEndpoints[file] ??= []).push(m.route);
+      }
+    }
+    if (fileToEndpoints[file]) {
+      fileToEndpoints[file] = uniqSorted(fileToEndpoints[file]!);
+    }
+  }
+  for (const e of endpoints) e.callers = uniqSorted(e.callers);
+
   return {
     framework: "nextjs-app",
     generatedAt: new Date().toISOString(),
@@ -31,7 +55,12 @@ export function buildNextMap(opts: NextAdapterOptions): AppMap {
     routes,
     endpoints,
     fileToRoutes,
+    fileToEndpoints,
   };
+}
+
+function uniqSorted(xs: string[]): string[] {
+  return Array.from(new Set(xs)).sort();
 }
 
 interface TsPaths {
@@ -125,6 +154,7 @@ function walk(
         method: m.method,
         file: relFile,
         bodyShape: m.bodyShape,
+        callers: [],
       });
     }
     (fileToRoutes[relFile] ??= []).push(...parsed.map((m) => `${m.method} ${path}`));
@@ -345,4 +375,107 @@ function isUnder(root: string, p: string): boolean {
 function toRel(rootDir: string, p: string): string {
   const r = relative(rootDir, p);
   return r.split(sep).join("/");
+}
+
+// ---------- Endpoint call detection ----------
+
+interface DetectedCall {
+  path: string;
+  method: HttpMethod;
+}
+
+const FETCH_RE = /\bfetch\s*\(\s*['"`]([^'"`\n]+)['"`](?:\s*,\s*\{([\s\S]{0,400}?)\})?/g;
+const AXIOS_RE =
+  /\baxios\s*\.\s*(get|post|put|patch|delete|head|options)\s*\(\s*['"`]([^'"`\n]+)['"`]/gi;
+const SWR_RE = /\buseSWR\s*\(\s*['"`]([^'"`\n]+)['"`]/g;
+const METHOD_IN_OPTS_RE = /method\s*:\s*['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]/i;
+
+/**
+ * Best-effort static detection of API calls in a source file. Catches the
+ * common patterns: `fetch("/api/x")`, `fetch("/api/x", { method: "POST" })`,
+ * `axios.post("/api/x", body)`, `useSWR("/api/x")`. Does NOT chase variable
+ * indirection — `const url = "/api/x"; fetch(url)` is invisible to this.
+ */
+export function detectEndpointCalls(file: string): DetectedCall[] {
+  let src: string;
+  try {
+    src = readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+  const out: DetectedCall[] = [];
+
+  FETCH_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = FETCH_RE.exec(src))) {
+    const path = m[1]!;
+    if (!looksLikePath(path)) continue;
+    const opts = m[2] ?? "";
+    const methodMatch = METHOD_IN_OPTS_RE.exec(opts);
+    const method: HttpMethod = (methodMatch?.[1]?.toUpperCase() as HttpMethod | undefined) ?? "GET";
+    out.push({ path, method });
+  }
+
+  AXIOS_RE.lastIndex = 0;
+  while ((m = AXIOS_RE.exec(src))) {
+    const method = m[1]!.toUpperCase() as HttpMethod;
+    const path = m[2]!;
+    if (!looksLikePath(path)) continue;
+    out.push({ path, method });
+  }
+
+  SWR_RE.lastIndex = 0;
+  while ((m = SWR_RE.exec(src))) {
+    const path = m[1]!;
+    if (!looksLikePath(path)) continue;
+    out.push({ path, method: "GET" });
+  }
+
+  return out;
+}
+
+function looksLikePath(s: string): boolean {
+  // Reject obvious non-paths: http(s) URLs, mailto, etc.
+  if (/^[a-z]+:\/\//i.test(s)) return false;
+  if (s.startsWith("mailto:") || s.startsWith("tel:")) return false;
+  return s.startsWith("/");
+}
+
+/**
+ * Match a detected call site against the discovered endpoint list. Returns all
+ * endpoints whose path + method match. Path matching is segment-aware with
+ * wildcard handling — `[id]`, `:id`, and `${id}` interpolations all match any
+ * non-empty segment.
+ */
+export function matchEndpoint(
+  call: DetectedCall,
+  endpoints: EndpointEntry[],
+): EndpointEntry[] {
+  const callSegs = splitPath(call.path);
+  return endpoints.filter(
+    (e) => e.method === call.method && pathSegmentsMatch(callSegs, splitPath(e.path)),
+  );
+}
+
+function splitPath(p: string): string[] {
+  // Drop trailing query/hash, split, drop empties.
+  const clean = p.split(/[?#]/)[0] ?? p;
+  return clean.split("/").filter(Boolean);
+}
+
+function pathSegmentsMatch(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (isWildcardSegment(a[i]!) || isWildcardSegment(b[i]!)) continue;
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function isWildcardSegment(seg: string): boolean {
+  // `:id`, `[id]`, or anything containing `${...}` interpolation.
+  if (seg.startsWith(":")) return true;
+  if (seg.startsWith("[") && seg.endsWith("]")) return true;
+  if (seg.includes("${")) return true;
+  return false;
 }

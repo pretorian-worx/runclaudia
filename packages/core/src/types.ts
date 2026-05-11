@@ -33,6 +33,8 @@ export interface EndpointEntry {
   file: string;
   /** Best-effort guess at the request body shape, e.g. "json", "formData", "text", or null if no body parsing detected. */
   bodyShape: "json" | "formData" | "text" | "arrayBuffer" | null;
+  /** Files statically detected to call this endpoint (fetch/axios/SWR). Best-effort. */
+  callers: string[];
 }
 
 export interface AppMap {
@@ -42,6 +44,8 @@ export interface AppMap {
   routes: RouteEntry[];
   endpoints: EndpointEntry[];
   fileToRoutes: Record<string, string[]>;
+  /** Reverse index: file path → endpoint route strings (e.g. "POST /api/bugs") that file calls. */
+  fileToEndpoints: Record<string, string[]>;
 }
 
 export const PlanFlowSchema = z.object({

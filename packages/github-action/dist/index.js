@@ -42370,6 +42370,32 @@ function buildNextMap(opts) {
     if (appDir) {
         walk(appDir, "", appDir, rootDir, tsPaths, routes, endpoints, fileToRoutes, opts.maxDepth ?? 12);
     }
+    // Second pass: link endpoints to caller files.
+    // We collect every file the reachability walk visited (anything in fileToRoutes
+    // is by definition reachable from at least one route, plus the endpoint handler
+    // files themselves are also caller-eligible).
+    const fileToEndpoints = {};
+    for (const e of endpoints)
+        e.callers = [];
+    const callerFiles = new Set(Object.keys(fileToRoutes));
+    for (const file of callerFiles) {
+        const calls = detectEndpointCalls((0,external_node_path_namespaceObject.join)(rootDir, file));
+        if (calls.length === 0)
+            continue;
+        for (const call of calls) {
+            const matched = matchEndpoint(call, endpoints);
+            for (const m of matched) {
+                if (!m.callers.includes(file))
+                    m.callers.push(file);
+                (fileToEndpoints[file] ??= []).push(m.route);
+            }
+        }
+        if (fileToEndpoints[file]) {
+            fileToEndpoints[file] = uniqSorted(fileToEndpoints[file]);
+        }
+    }
+    for (const e of endpoints)
+        e.callers = uniqSorted(e.callers);
     return {
         framework: "nextjs-app",
         generatedAt: new Date().toISOString(),
@@ -42377,7 +42403,11 @@ function buildNextMap(opts) {
         routes,
         endpoints,
         fileToRoutes,
+        fileToEndpoints,
     };
+}
+function uniqSorted(xs) {
+    return Array.from(new Set(xs)).sort();
 }
 function loadTsPaths(rootDir) {
     for (const name of ["tsconfig.json", "jsconfig.json"]) {
@@ -42449,6 +42479,7 @@ function walk(dir, routePath, appRoot, rootDir, tsPaths, routes, endpoints, file
                 method: m.method,
                 file: relFile,
                 bodyShape: m.bodyShape,
+                callers: [],
             });
         }
         (fileToRoutes[relFile] ??= []).push(...parsed.map((m) => `${m.method} ${path}`));
@@ -42647,6 +42678,97 @@ function toRel(rootDir, p) {
     const r = (0,external_node_path_namespaceObject.relative)(rootDir, p);
     return r.split(external_node_path_namespaceObject.sep).join("/");
 }
+const FETCH_RE = /\bfetch\s*\(\s*['"`]([^'"`\n]+)['"`](?:\s*,\s*\{([\s\S]{0,400}?)\})?/g;
+const AXIOS_RE = /\baxios\s*\.\s*(get|post|put|patch|delete|head|options)\s*\(\s*['"`]([^'"`\n]+)['"`]/gi;
+const SWR_RE = /\buseSWR\s*\(\s*['"`]([^'"`\n]+)['"`]/g;
+const METHOD_IN_OPTS_RE = /method\s*:\s*['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]/i;
+/**
+ * Best-effort static detection of API calls in a source file. Catches the
+ * common patterns: `fetch("/api/x")`, `fetch("/api/x", { method: "POST" })`,
+ * `axios.post("/api/x", body)`, `useSWR("/api/x")`. Does NOT chase variable
+ * indirection — `const url = "/api/x"; fetch(url)` is invisible to this.
+ */
+function detectEndpointCalls(file) {
+    let src;
+    try {
+        src = (0,external_node_fs_namespaceObject.readFileSync)(file, "utf8");
+    }
+    catch {
+        return [];
+    }
+    const out = [];
+    FETCH_RE.lastIndex = 0;
+    let m;
+    while ((m = FETCH_RE.exec(src))) {
+        const path = m[1];
+        if (!looksLikePath(path))
+            continue;
+        const opts = m[2] ?? "";
+        const methodMatch = METHOD_IN_OPTS_RE.exec(opts);
+        const method = methodMatch?.[1]?.toUpperCase() ?? "GET";
+        out.push({ path, method });
+    }
+    AXIOS_RE.lastIndex = 0;
+    while ((m = AXIOS_RE.exec(src))) {
+        const method = m[1].toUpperCase();
+        const path = m[2];
+        if (!looksLikePath(path))
+            continue;
+        out.push({ path, method });
+    }
+    SWR_RE.lastIndex = 0;
+    while ((m = SWR_RE.exec(src))) {
+        const path = m[1];
+        if (!looksLikePath(path))
+            continue;
+        out.push({ path, method: "GET" });
+    }
+    return out;
+}
+function looksLikePath(s) {
+    // Reject obvious non-paths: http(s) URLs, mailto, etc.
+    if (/^[a-z]+:\/\//i.test(s))
+        return false;
+    if (s.startsWith("mailto:") || s.startsWith("tel:"))
+        return false;
+    return s.startsWith("/");
+}
+/**
+ * Match a detected call site against the discovered endpoint list. Returns all
+ * endpoints whose path + method match. Path matching is segment-aware with
+ * wildcard handling — `[id]`, `:id`, and `${id}` interpolations all match any
+ * non-empty segment.
+ */
+function matchEndpoint(call, endpoints) {
+    const callSegs = splitPath(call.path);
+    return endpoints.filter((e) => e.method === call.method && pathSegmentsMatch(callSegs, splitPath(e.path)));
+}
+function splitPath(p) {
+    // Drop trailing query/hash, split, drop empties.
+    const clean = p.split(/[?#]/)[0] ?? p;
+    return clean.split("/").filter(Boolean);
+}
+function pathSegmentsMatch(a, b) {
+    if (a.length !== b.length)
+        return false;
+    for (let i = 0; i < a.length; i++) {
+        if (isWildcardSegment(a[i]) || isWildcardSegment(b[i]))
+            continue;
+        if (a[i] !== b[i])
+            return false;
+    }
+    return true;
+}
+function isWildcardSegment(seg) {
+    // `:id`, `[id]`, or anything containing `${...}` interpolation.
+    if (seg.startsWith(":"))
+        return true;
+    if (seg.startsWith("[") && seg.endsWith("]"))
+        return true;
+    if (seg.includes("${"))
+        return true;
+    return false;
+}
 //# sourceMappingURL=nextjs.js.map
 ;// CONCATENATED MODULE: ../core/dist/map.js
 
@@ -42657,8 +42779,12 @@ function loadOrBuildMap(opts) {
     const cachePath = opts.cachePath ?? (0,external_node_path_namespaceObject.join)(rootDir, ".claudia", "map.json");
     if (!opts.refresh && (0,external_node_fs_namespaceObject.existsSync)(cachePath)) {
         const cached = readMap(cachePath);
-        // Force a rebuild if the cache predates the endpoints field (v0.2.x and older).
-        if (cached && Array.isArray(cached.endpoints) && isFresh(cached, rootDir))
+        // Force a rebuild if the cache predates the endpoints/fileToEndpoints fields.
+        const hasNewerFields = cached &&
+            Array.isArray(cached.endpoints) &&
+            cached.fileToEndpoints !== undefined &&
+            typeof cached.fileToEndpoints === "object";
+        if (hasNewerFields && cached && isFresh(cached, rootDir))
             return cached;
     }
     const map = buildNextMap({ rootDir });
@@ -46809,20 +46935,13 @@ Rules:
 - Distinguish API changes from UI changes:
   - A changed page/component implies a flow on its route(s) — write checks as user actions.
   - A changed endpoint (route.ts) implies an API contract change — call out the method + path, the request body shape (json/formData/text/etc), and recommend exercising it via the UI flow that hits it OR directly (curl/API client) when no UI flow is implicated.
+  - A changed component that *calls* an endpoint (statically detected — see "Endpoints called by changed files" below) implies a full-stack flow: the UI change AND the contract between UI and that endpoint. Verify the end-to-end roundtrip, not just the rendered output.
 - The flow.routes field can contain either page paths ("/checkout") or method-prefixed endpoint paths ("POST /api/bugs/move"). Use whichever fits the change.
 - Risk levels: "high" = auth, payments, data-mutation, schema changes, or many routes/endpoints affected; "medium" = single-route behavior change or additive endpoint; "low" = cosmetic, copy, isolated UI.
 - Suggested checks must be concrete user actions ("complete checkout with a saved card", not "test the checkout flow") or concrete API checks ("POST /api/bugs/move with a valid payload; expect 200 + new bug ref").
 - Set verdict to "skip" only if the diff genuinely cannot affect runtime behavior (already-filtered cases shouldn't reach you, so prefer "test").
 - coverageGaps captures *unmapped risk* — changes you can see have impact but no flow or endpoint in the map covers them.
 - Be terse. The output is read by humans on a PR.`;
-/**
- * Reduce the map to only the routes that the diff actually touches.
- * Massively cuts prompt token cost on large repos; the brain only needs the
- * route information for places the diff implicates.
- *
- * A route is "implicated" if any of its tracked files appears in the diff
- * (matching either the post-image path or, for renames, the pre-image path).
- */
 function filterMapForDiff(map, diff) {
     const diffPaths = new Set();
     for (const f of diff.files) {
@@ -46833,16 +46952,45 @@ function filterMapForDiff(map, diff) {
     const implicated = map.routes.filter((r) => r.files.some((file) => diffPaths.has(file)));
     const endpoints = map.endpoints ?? [];
     const implicatedEndpoints = endpoints.filter((e) => diffPaths.has(e.file));
+    // Indirect linkage: a changed file calls an endpoint whose handler isn't itself
+    // in the diff. We want the brain to consider the contract between the UI and
+    // that endpoint as part of the flow.
+    const fileToEndpoints = map.fileToEndpoints ?? {};
+    const directlyChangedRoutes = new Set(implicatedEndpoints.map((e) => e.route));
+    const calledRouteToCallers = new Map();
+    for (const file of diffPaths) {
+        const calls = fileToEndpoints[file] ?? [];
+        for (const route of calls) {
+            if (directlyChangedRoutes.has(route))
+                continue;
+            const list = calledRouteToCallers.get(route) ?? [];
+            list.push(file);
+            calledRouteToCallers.set(route, list);
+        }
+    }
+    const endpointsByRoute = new Map(endpoints.map((e) => [e.route, e]));
+    const endpointsCalledByDiff = [];
+    for (const [route, callerFiles] of calledRouteToCallers) {
+        const endpoint = endpointsByRoute.get(route);
+        if (!endpoint)
+            continue;
+        endpointsCalledByDiff.push({
+            endpoint,
+            callerFiles: Array.from(new Set(callerFiles)).sort(),
+        });
+    }
+    endpointsCalledByDiff.sort((a, b) => a.endpoint.route.localeCompare(b.endpoint.route));
     return {
         implicated,
         omittedCount: map.routes.length - implicated.length,
         implicatedEndpoints,
         omittedEndpointCount: endpoints.length - implicatedEndpoints.length,
+        endpointsCalledByDiff,
     };
 }
 function buildUserMessage(args) {
     const { diff, map, targetUrl } = args;
-    const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount } = filterMapForDiff(map, diff);
+    const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount, endpointsCalledByDiff } = filterMapForDiff(map, diff);
     const totalEndpoints = (map.endpoints ?? []).length;
     const parts = [];
     parts.push(`# Route map (framework: ${map.framework})`);
@@ -46884,6 +47032,22 @@ function buildUserMessage(args) {
         if (omittedEndpointCount > 0) {
             parts.push("");
             parts.push(`(${omittedEndpointCount} other endpoints exist in this project but are not affected by this diff.)`);
+        }
+    }
+    parts.push("");
+    parts.push(`# Endpoints called by changed files`);
+    if (endpointsCalledByDiff.length === 0) {
+        parts.push("(no static call sites detected from files in this diff)");
+    }
+    else {
+        parts.push(`Statically detected call sites — when these files change, the contract with the endpoint may be affected.`);
+        parts.push("");
+        for (const site of endpointsCalledByDiff) {
+            const body = site.endpoint.bodyShape ? ` (body: ${site.endpoint.bodyShape})` : "";
+            parts.push(`- ${site.endpoint.method} ${site.endpoint.path}${body}`);
+            parts.push(`  - handler: ${site.endpoint.file}`);
+            for (const c of site.callerFiles)
+                parts.push(`  - called by: ${c}`);
         }
     }
     parts.push("");
