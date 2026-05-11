@@ -28,12 +28,22 @@ inputs:
     description: "Project root directory"
     required: false
     default: "."
+  mode:
+    description: "Trust gradient: shadow (comment only, default), advisory (comment + neutral PR check), or gating (comment + check that fails when blocking-risk threshold is hit). Gating requires `permissions: checks: write` in the consuming workflow."
+    required: false
+    default: "shadow"
+  blocking-risk:
+    description: "In gating mode, the minimum flow risk that fails the check: low | medium | high. Default high."
+    required: false
+    default: "high"
 
 outputs:
   verdict:
     description: "test or skip"
   plan-json:
     description: "Plan as JSON string"
+  check-conclusion:
+    description: "In advisory/gating mode: the conclusion of the posted check (success | failure | neutral). Empty in shadow mode."
 
 runs:
   using: "node20"

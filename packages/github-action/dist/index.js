@@ -47090,7 +47090,68 @@ async function runPlan(opts) {
     };
 }
 //# sourceMappingURL=plan.js.map
+;// CONCATENATED MODULE: ../core/dist/gating.js
+const RISK_ORDER = { low: 0, medium: 1, high: 2 };
+/**
+ * Pure decision function — takes the plan and the user's gating config and
+ * tells the action what check (if any) to post.
+ *
+ * Rules:
+ *   shadow   → never post a check
+ *   advisory → post a neutral check unconditionally
+ *   gating   → post a check; fails if any flow has risk >= blockingRisk;
+ *              skip-verdict plans always pass (nothing to verify)
+ */
+function decideGating(plan, opts) {
+    if (opts.mode === "shadow") {
+        return { postCheck: false, conclusion: "success", title: "", failingFlows: [] };
+    }
+    if (opts.mode === "advisory") {
+        return {
+            postCheck: true,
+            conclusion: "neutral",
+            title: summarizeForCheck(plan, "advisory"),
+            failingFlows: [],
+        };
+    }
+    // mode === "gating"
+    const threshold = opts.blockingRisk ?? "high";
+    const thresholdLevel = RISK_ORDER[threshold];
+    if (plan.verdict === "skip") {
+        return {
+            postCheck: true,
+            conclusion: "success",
+            title: `claudia: skipped (${plan.skipReason ?? "no testable changes"})`,
+            failingFlows: [],
+        };
+    }
+    const failing = plan.flows.filter((f) => RISK_ORDER[f.risk] >= thresholdLevel);
+    if (failing.length === 0) {
+        return {
+            postCheck: true,
+            conclusion: "success",
+            title: summarizeForCheck(plan, "gating-pass"),
+            failingFlows: [],
+        };
+    }
+    return {
+        postCheck: true,
+        conclusion: "failure",
+        title: `${failing.length} flow${failing.length === 1 ? "" : "s"} at or above risk threshold "${threshold}"`,
+        failingFlows: failing,
+    };
+}
+function summarizeForCheck(plan, kind) {
+    if (plan.verdict === "skip")
+        return `claudia: skipped (${plan.skipReason ?? "no testable changes"})`;
+    const flows = plan.flows.length;
+    if (kind === "gating-pass")
+        return `claudia: ${flows} flow${flows === 1 ? "" : "s"} to verify — no blocking risk`;
+    return `claudia: ${flows} flow${flows === 1 ? "" : "s"} to verify`;
+}
+//# sourceMappingURL=gating.js.map
 ;// CONCATENATED MODULE: ../core/dist/index.js
+
 
 
 
@@ -47175,6 +47236,19 @@ function formatJson(result) {
 
 
 const STICKY_MARKER = "<!-- claudia:plan -->";
+const CHECK_NAME = "claudia / plan";
+function parseMode(raw) {
+    const v = (raw || "shadow").trim().toLowerCase();
+    if (v === "shadow" || v === "advisory" || v === "gating")
+        return v;
+    throw new Error(`Invalid 'mode': ${raw}. Expected shadow | advisory | gating.`);
+}
+function parseRisk(raw) {
+    const v = (raw || "high").trim().toLowerCase();
+    if (v === "low" || v === "medium" || v === "high")
+        return v;
+    throw new Error(`Invalid 'blocking-risk': ${raw}. Expected low | medium | high.`);
+}
 async function main() {
     const apiKey = core.getInput("anthropic-api-key", { required: true });
     const githubToken = core.getInput("github-token");
@@ -47183,6 +47257,8 @@ async function main() {
     const targetUrl = core.getInput("target-url") || undefined;
     const model = core.getInput("model") || undefined;
     const cwd = (0,external_node_path_namespaceObject.resolve)(core.getInput("cwd") || ".");
+    const mode = parseMode(core.getInput("mode"));
+    const blockingRisk = parseRisk(core.getInput("blocking-risk"));
     if (!base || !head) {
         core.setFailed("base and head must be set; this action runs on pull_request events");
         return;
@@ -47190,36 +47266,68 @@ async function main() {
     const result = await runPlan({ rootDir: cwd, base, head, targetUrl, apiKey, model });
     const md = formatMarkdown(result);
     const json = formatJson(result);
+    const gating = decideGating(result.plan, { mode, blockingRisk });
     core.setOutput("verdict", result.plan.verdict);
     core.setOutput("plan-json", json);
+    core.setOutput("check-conclusion", gating.postCheck ? gating.conclusion : "");
     core.summary.addRaw(md).write();
     const ctx = github.context;
-    if (ctx.payload.pull_request && githubToken) {
-        const octokit = github.getOctokit(githubToken);
-        const body = `${STICKY_MARKER}\n${md}`;
-        const { owner, repo } = ctx.repo;
-        const issue_number = ctx.payload.pull_request.number;
-        const existing = await octokit.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
-        const prior = existing.data.find((c) => c.body?.includes(STICKY_MARKER));
-        let commentId;
-        if (prior) {
-            const updated = await octokit.rest.issues.updateComment({ owner, repo, comment_id: prior.id, body });
-            commentId = updated.data.id;
-        }
-        else {
-            const created = await octokit.rest.issues.createComment({ owner, repo, issue_number, body });
-            commentId = created.data.id;
-        }
-        // Seed +1 / -1 reactions from the bot so users can click them inline rather
-        // than digging through the reactions picker. Idempotent: GitHub silently
-        // accepts repeated identical reactions from the same user.
-        await octokit.rest.reactions
-            .createForIssueComment({ owner, repo, comment_id: commentId, content: "+1" })
-            .catch(() => { });
-        await octokit.rest.reactions
-            .createForIssueComment({ owner, repo, comment_id: commentId, content: "-1" })
-            .catch(() => { });
+    if (!ctx.payload.pull_request || !githubToken)
+        return;
+    const octokit = github.getOctokit(githubToken);
+    const { owner, repo } = ctx.repo;
+    const pr = ctx.payload.pull_request;
+    const issue_number = pr.number;
+    const headSha = pr.head.sha;
+    // 1. Sticky comment (always, regardless of mode)
+    const body = `${STICKY_MARKER}\n${md}`;
+    const existing = await octokit.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
+    const prior = existing.data.find((c) => c.body?.includes(STICKY_MARKER));
+    let commentId;
+    if (prior) {
+        const updated = await octokit.rest.issues.updateComment({ owner, repo, comment_id: prior.id, body });
+        commentId = updated.data.id;
     }
+    else {
+        const created = await octokit.rest.issues.createComment({ owner, repo, issue_number, body });
+        commentId = created.data.id;
+    }
+    // 2. Seed +1 / -1 reactions so reviewers can click them inline.
+    await octokit.rest.reactions
+        .createForIssueComment({ owner, repo, comment_id: commentId, content: "+1" })
+        .catch(() => { });
+    await octokit.rest.reactions
+        .createForIssueComment({ owner, repo, comment_id: commentId, content: "-1" })
+        .catch(() => { });
+    // 3. Trust-gradient: post a check run in advisory or gating modes.
+    if (gating.postCheck) {
+        try {
+            await octokit.rest.checks.create({
+                owner,
+                repo,
+                name: CHECK_NAME,
+                head_sha: headSha,
+                status: "completed",
+                conclusion: gating.conclusion,
+                output: {
+                    title: gating.title,
+                    summary: gatingSummary(gating, md),
+                },
+            });
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            core.warning(`Could not create check run (mode=${mode}): ${msg}. Did the workflow grant 'checks: write'?`);
+        }
+    }
+}
+function gatingSummary(gating, planMarkdown) {
+    if (gating.failingFlows.length === 0)
+        return planMarkdown;
+    const blockingList = gating.failingFlows
+        .map((f) => `- **${f.name}** (${f.risk}) — ${f.reasoning}`)
+        .join("\n");
+    return `### Blocking flows\n${blockingList}\n\n---\n\n${planMarkdown}`;
 }
 main().catch((err) => {
     core.setFailed(err instanceof Error ? err.message : String(err));
