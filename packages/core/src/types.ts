@@ -57,6 +57,27 @@ export interface DbModelEntry {
   file: string;
 }
 
+export interface SpecEntry {
+  /** Test framework this spec was written for. */
+  framework: "playwright" | "cypress";
+  /** Spec file (relative to rootDir). */
+  file: string;
+  /** Test name from `test("name", ...)` / `it("name", ...)`. */
+  name: string;
+  /** URL paths the spec visits (page.goto, cy.visit). */
+  routesCovered: string[];
+  /** Method-prefixed endpoint routes the spec calls directly (e.g. "POST /api/bugs"). */
+  endpointsCovered: string[];
+  /**
+   * True if the spec lives inside a describe block with a beforeAll / before()
+   * hook — selecting one test from such a block requires running the whole
+   * describe to honor the setup. Flagged for downstream Stage C selection logic.
+   */
+  hasSharedSetup: boolean;
+  /** Explicit `// @claudia flow: <name>` annotation overriding heuristic coverage. */
+  flowAnnotations: string[];
+}
+
 export interface InfraEntry {
   /** IaC tool that defines this resource. */
   tool: "terraform";
@@ -78,6 +99,7 @@ export interface AppMap {
   endpoints: EndpointEntry[];
   infra: InfraEntry[];
   dbModels: DbModelEntry[];
+  specs: SpecEntry[];
   fileToRoutes: Record<string, string[]>;
   /** Reverse index: file path → endpoint route strings (e.g. "POST /api/bugs") that file calls. */
   fileToEndpoints: Record<string, string[]>;
@@ -85,6 +107,8 @@ export interface AppMap {
   fileToInfra: Record<string, string[]>;
   /** Reverse index: file path → DB model names declared in that file. */
   fileToTables: Record<string, string[]>;
+  /** Reverse index: spec file path → list of test names declared in that file. */
+  fileToSpecs: Record<string, string[]>;
 }
 
 export const PlanFlowSchema = z.object({

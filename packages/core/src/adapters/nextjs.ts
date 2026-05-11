@@ -3,6 +3,7 @@ import { join, relative, sep } from "node:path";
 import type { AppMap, EndpointEntry, HttpMethod, RouteEntry } from "../types.js";
 import { discoverTerraformResources } from "./terraform.js";
 import { detectPrismaTableUsage, discoverPrismaModels } from "./prisma.js";
+import { discoverSpecs } from "./specs.js";
 
 export interface NextAdapterOptions {
   rootDir: string;
@@ -70,6 +71,9 @@ export function buildNextMap(opts: NextAdapterOptions): AppMap {
     }
   }
 
+  // Fifth pass: spec indexing (Playwright/Cypress) for Stage C foundation.
+  const { specs, fileToSpecs } = discoverSpecs({ rootDir });
+
   return {
     framework: "nextjs-app",
     generatedAt: new Date().toISOString(),
@@ -78,10 +82,12 @@ export function buildNextMap(opts: NextAdapterOptions): AppMap {
     endpoints,
     infra,
     dbModels,
+    specs,
     fileToRoutes,
     fileToEndpoints,
     fileToInfra,
     fileToTables,
+    fileToSpecs,
   };
 }
 

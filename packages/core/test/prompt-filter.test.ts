@@ -33,6 +33,30 @@ const map: AppMap = {
   fileToTables: {
     "prisma/schema.prisma": ["Bug", "Workspace"],
   },
+  specs: [
+    {
+      framework: "playwright",
+      file: "e2e/bugs.spec.ts",
+      name: "creates a bug",
+      routesCovered: [],
+      endpointsCovered: ["POST /api/bugs"],
+      hasSharedSetup: false,
+      flowAnnotations: [],
+    },
+    {
+      framework: "playwright",
+      file: "e2e/about.spec.ts",
+      name: "renders about page",
+      routesCovered: ["/about"],
+      endpointsCovered: [],
+      hasSharedSetup: false,
+      flowAnnotations: [],
+    },
+  ],
+  fileToSpecs: {
+    "e2e/bugs.spec.ts": ["creates a bug"],
+    "e2e/about.spec.ts": ["renders about page"],
+  },
 };
 
 function diff(paths: string[]): Diff {
@@ -192,6 +216,46 @@ describe("filterMapForDiff db models", () => {
     const result = filterMapForDiff(map, diff(["prisma/schema.prisma"]));
     expect(result.implicatedDbModels.map((m) => m.name).sort()).toEqual(["Bug", "Workspace"]);
     expect(result.omittedDbModelCount).toBe(0);
+  });
+});
+
+describe("spec coverage filtering + rendering", () => {
+  it("surfaces specs whose endpoint coverage intersects the diff", () => {
+    const result = filterMapForDiff(map, diff(["app/api/bugs/route.ts"]));
+    expect(result.coveringSpecs.map((s) => s.name)).toEqual(["creates a bug"]);
+  });
+
+  it("surfaces specs whose route coverage intersects the diff", () => {
+    const result = filterMapForDiff(map, diff(["app/about/page.tsx"]));
+    expect(result.coveringSpecs.map((s) => s.name)).toEqual(["renders about page"]);
+  });
+
+  it("reports uncovered routes when no spec covers an implicated route", () => {
+    const result = filterMapForDiff(map, diff(["app/checkout/page.tsx"]));
+    expect(result.coveringSpecs).toEqual([]);
+    expect(result.uncoveredRoutes).toContain("/checkout");
+  });
+
+  it("renders the coverage section in the prompt when specs cover the diff", () => {
+    const msg = buildUserMessage({ diff: diff(["app/api/bugs/route.ts"]), map });
+    expect(msg).toContain("# Existing test coverage");
+    expect(msg).toContain('e2e/bugs.spec.ts: "creates a bug"');
+    expect(msg).toContain("endpoints: POST /api/bugs");
+  });
+
+  it("renders coverage gaps in the prompt when implicated flows have no spec", () => {
+    const msg = buildUserMessage({ diff: diff(["app/checkout/page.tsx"]), map });
+    expect(msg).toContain("Coverage gaps");
+    expect(msg).toContain("/checkout");
+  });
+
+  it("flags shared-setup specs in the prompt", () => {
+    const sharedMap = {
+      ...map,
+      specs: [{ ...map.specs[0]!, hasSharedSetup: true }],
+    };
+    const msg = buildUserMessage({ diff: diff(["app/api/bugs/route.ts"]), map: sharedMap });
+    expect(msg).toContain("[shared setup]");
   });
 });
 

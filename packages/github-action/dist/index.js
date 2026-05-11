@@ -1944,7 +1944,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getOctokit = exports.context = void 0;
 const Context = __importStar(__nccwpck_require__(4105));
-const utils_1 = __nccwpck_require__(2828);
+const utils_1 = __nccwpck_require__(447);
 exports.context = new Context.Context();
 /**
  * Returns a hydrated octokit ready to use for GitHub Actions
@@ -2038,7 +2038,7 @@ exports.getApiBaseUrl = getApiBaseUrl;
 
 /***/ }),
 
-/***/ 2828:
+/***/ 447:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -42518,7 +42518,135 @@ function detectPrismaTableUsage(src, knownModels) {
     return Array.from(out).sort();
 }
 //# sourceMappingURL=prisma.js.map
+;// CONCATENATED MODULE: ../core/dist/adapters/specs.js
+
+
+// Conventional E2E/integration locations. We intentionally don't index unit
+// tests (e.g. *.test.ts next to source files) — they don't carry route or
+// endpoint coverage information that's useful here.
+const SPEC_DIRS = [
+    "e2e",
+    "tests/e2e",
+    "test/e2e",
+    "playwright",
+    "playwright/tests",
+    "cypress/e2e",
+    "cypress/integration",
+];
+const SPEC_FILE_RE = /\.(?:spec|test|cy)\.(?:[jt]sx?)$/i;
+const TEST_BLOCK_RE = /\b(?:test|it)(?:\.\w+)?\s*\(\s*['"`]([^'"`\n]+)['"`]/g;
+const PAGE_GOTO_RE = /\bpage\s*\.\s*goto\s*\(\s*['"`]([^'"`\n]+)['"`]/g;
+const PAGE_REQUEST_RE = /\bpage\s*\.\s*request\s*\.\s*(get|post|put|patch|delete|head|options)\s*\(\s*['"`]([^'"`\n]+)['"`]/gi;
+const CY_VISIT_RE = /\bcy\s*\.\s*visit\s*\(\s*['"`]([^'"`\n]+)['"`]/g;
+const CY_REQUEST_RE = /\bcy\s*\.\s*request\s*\(\s*['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]\s*,\s*['"`]([^'"`\n]+)['"`]/gi;
+const CY_REQUEST_OBJ_RE = /\bcy\s*\.\s*request\s*\(\s*\{\s*method\s*:\s*['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]\s*,\s*url\s*:\s*['"`]([^'"`\n]+)['"`]/gi;
+const FLOW_ANNOTATION_RE = /\/\/\s*@claudia\s+flow\s*:\s*([^\n]+)/gi;
+const SHARED_SETUP_RE = /\b(?:beforeAll|before)\s*\(/;
+/**
+ * Walk known E2E test directories and parse each spec file. Returns the per-test
+ * coverage map plus a reverse index.
+ */
+function discoverSpecs(opts) {
+    const { rootDir } = opts;
+    const maxDepth = opts.maxDepth ?? 8;
+    const specs = [];
+    const fileToSpecs = {};
+    for (const candidate of SPEC_DIRS) {
+        const abs = (0,external_node_path_namespaceObject.join)(rootDir, candidate);
+        if (!(0,external_node_fs_namespaceObject.existsSync)(abs))
+            continue;
+        if (!(0,external_node_fs_namespaceObject.statSync)(abs).isDirectory())
+            continue;
+        walkSpecDir(abs, rootDir, maxDepth, specs, fileToSpecs);
+    }
+    specs.sort((a, b) => (a.file === b.file ? a.name.localeCompare(b.name) : a.file.localeCompare(b.file)));
+    for (const k of Object.keys(fileToSpecs)) {
+        fileToSpecs[k] = Array.from(new Set(fileToSpecs[k])).sort();
+    }
+    return { specs, fileToSpecs };
+}
+function walkSpecDir(dir, rootDir, depthLeft, specs, fileToSpecs) {
+    if (depthLeft <= 0)
+        return;
+    let entries;
+    try {
+        entries = (0,external_node_fs_namespaceObject.readdirSync)(dir, { withFileTypes: true });
+    }
+    catch {
+        return;
+    }
+    for (const entry of entries) {
+        if (entry.name.startsWith("."))
+            continue;
+        if (entry.name === "node_modules")
+            continue;
+        const abs = (0,external_node_path_namespaceObject.join)(dir, entry.name);
+        if (entry.isDirectory()) {
+            walkSpecDir(abs, rootDir, depthLeft - 1, specs, fileToSpecs);
+            continue;
+        }
+        if (!entry.isFile())
+            continue;
+        if (!SPEC_FILE_RE.test(entry.name))
+            continue;
+        parseSpecFile(abs, rootDir, specs, fileToSpecs);
+    }
+}
+function parseSpecFile(abs, rootDir, specs, fileToSpecs) {
+    let src;
+    try {
+        src = (0,external_node_fs_namespaceObject.readFileSync)(abs, "utf8");
+    }
+    catch {
+        return;
+    }
+    const relFile = (0,external_node_path_namespaceObject.relative)(rootDir, abs).split(external_node_path_namespaceObject.sep).join("/");
+    const framework = inferFramework(src, relFile);
+    const hasSharedSetup = SHARED_SETUP_RE.test(src);
+    const routesCovered = uniqSorted(matchAll(PAGE_GOTO_RE, src, (m) => m[1]).concat(matchAll(CY_VISIT_RE, src, (m) => m[1])));
+    const endpointsCovered = uniqSorted(matchAll(PAGE_REQUEST_RE, src, (m) => `${m[1].toUpperCase()} ${m[2]}`)
+        .concat(matchAll(CY_REQUEST_RE, src, (m) => `${m[1].toUpperCase()} ${m[2]}`))
+        .concat(matchAll(CY_REQUEST_OBJ_RE, src, (m) => `${m[1].toUpperCase()} ${m[2]}`)));
+    const flowAnnotations = uniqSorted(matchAll(FLOW_ANNOTATION_RE, src, (m) => m[1].trim()));
+    const testNames = matchAll(TEST_BLOCK_RE, src, (m) => m[1]);
+    // Filter out files that look like specs by name but have no actual `test()` /
+    // `it()` blocks (e.g. helper modules in an e2e folder).
+    if (testNames.length === 0)
+        return;
+    for (const name of testNames) {
+        specs.push({
+            framework,
+            file: relFile,
+            name,
+            routesCovered,
+            endpointsCovered,
+            hasSharedSetup,
+            flowAnnotations,
+        });
+        (fileToSpecs[relFile] ??= []).push(name);
+    }
+}
+function inferFramework(src, file) {
+    if (file.includes("cypress/") || file.endsWith(".cy.ts") || file.endsWith(".cy.js"))
+        return "cypress";
+    if (/\bcy\s*\./.test(src) && !/from\s+['"]@playwright/.test(src))
+        return "cypress";
+    return "playwright";
+}
+function matchAll(re, src, take) {
+    const out = [];
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(src)))
+        out.push(take(m));
+    return out;
+}
+function uniqSorted(xs) {
+    return Array.from(new Set(xs)).sort();
+}
+//# sourceMappingURL=specs.js.map
 ;// CONCATENATED MODULE: ../core/dist/adapters/nextjs.js
+
 
 
 
@@ -42557,11 +42685,11 @@ function buildNextMap(opts) {
             }
         }
         if (fileToEndpoints[file]) {
-            fileToEndpoints[file] = uniqSorted(fileToEndpoints[file]);
+            fileToEndpoints[file] = nextjs_uniqSorted(fileToEndpoints[file]);
         }
     }
     for (const e of endpoints)
-        e.callers = uniqSorted(e.callers);
+        e.callers = nextjs_uniqSorted(e.callers);
     // Third pass: infrastructure discovery (framework-agnostic — runs at the
     // project root, not just under appDir).
     const { infra, fileToInfra } = discoverTerraformResources({ rootDir });
@@ -42581,6 +42709,8 @@ function buildNextMap(opts) {
             e.tables = detectPrismaTableUsage(handlerSrc, knownModelNames);
         }
     }
+    // Fifth pass: spec indexing (Playwright/Cypress) for Stage C foundation.
+    const { specs, fileToSpecs } = discoverSpecs({ rootDir });
     return {
         framework: "nextjs-app",
         generatedAt: new Date().toISOString(),
@@ -42589,13 +42719,15 @@ function buildNextMap(opts) {
         endpoints,
         infra,
         dbModels,
+        specs,
         fileToRoutes,
         fileToEndpoints,
         fileToInfra,
         fileToTables,
+        fileToSpecs,
     };
 }
-function uniqSorted(xs) {
+function nextjs_uniqSorted(xs) {
     return Array.from(new Set(xs)).sort();
 }
 function loadTsPaths(rootDir) {
@@ -42986,9 +43118,11 @@ function loadOrBuildMap(opts) {
             Array.isArray(cached.endpoints) &&
             Array.isArray(cached.infra) &&
             Array.isArray(cached.dbModels) &&
+            Array.isArray(cached.specs) &&
             cached.fileToEndpoints !== undefined &&
             cached.fileToInfra !== undefined &&
-            cached.fileToTables !== undefined;
+            cached.fileToTables !== undefined &&
+            cached.fileToSpecs !== undefined;
         if (hasNewerFields && cached && isFresh(cached, rootDir))
             return cached;
     }
@@ -47148,6 +47282,8 @@ Rules:
 - coverageGaps captures *unmapped risk* — changes you can see have impact but no flow or endpoint in the map covers them.
 - Treat infrastructure changes as production-impact risk. If the diff includes Terraform/CDK resources and any endpoint in the diff touches the same service (per the endpoint's "services" annotation), call out the coordinated risk — e.g. "S3 bucket policy changed AND POST /api/attachments writes to S3, verify the write still succeeds end-to-end."
 - Treat database-schema changes as high-risk by default. Endpoints carry a "tables" annotation listing the DB models they touch (e.g. a Prisma call like prisma.bug.create(...) maps to ["Bug"]). When the diff changes the schema for a model AND an endpoint in the diff (or called by the diff) touches that model, call out the read/write contract explicitly — "the Bug model gained a non-null column; POST /api/bugs writes to Bug, verify the new column is populated."
+- When the prompt's "Existing test coverage" section lists specs that already cover the affected routes/endpoints, reference them by file:name in your suggestedChecks — e.g. "Run e2e/checkout.spec.ts:'completes checkout' against the deploy." Recommending existing specs is cheaper for the team than writing new ones and is preferred when coverage exists.
+- coverageGaps should call out flows the diff implicates that have NO existing spec — that's a concrete signal to the team to add one.
 - Be terse. The output is read by humans on a PR.`;
 function filterMapForDiff(map, diff) {
     const diffPaths = new Set();
@@ -47191,6 +47327,22 @@ function filterMapForDiff(map, diff) {
     const implicatedInfra = infra.filter((r) => diffPaths.has(r.file));
     const dbModels = map.dbModels ?? [];
     const implicatedDbModels = dbModels.filter((m) => diffPaths.has(m.file));
+    // Spec coverage: a spec "covers" the diff if any of its tracked routes or
+    // endpoints intersects with the implicated set (direct OR called-by-diff).
+    const allImplicatedRoutes = new Set([
+        ...implicated.map((r) => r.route),
+    ]);
+    const allImplicatedEndpointRoutes = new Set([
+        ...implicatedEndpoints.map((e) => e.route),
+        ...endpointsCalledByDiff.map((s) => s.endpoint.route),
+    ]);
+    const specs = map.specs ?? [];
+    const coveringSpecs = specs.filter((s) => s.routesCovered.some((r) => allImplicatedRoutes.has(r)) ||
+        s.endpointsCovered.some((e) => allImplicatedEndpointRoutes.has(e)));
+    const coveredRoutes = new Set(coveringSpecs.flatMap((s) => s.routesCovered));
+    const coveredEndpoints = new Set(coveringSpecs.flatMap((s) => s.endpointsCovered));
+    const uncoveredRoutes = Array.from(allImplicatedRoutes).filter((r) => !coveredRoutes.has(r)).sort();
+    const uncoveredEndpoints = Array.from(allImplicatedEndpointRoutes).filter((e) => !coveredEndpoints.has(e)).sort();
     return {
         implicated,
         omittedCount: map.routes.length - implicated.length,
@@ -47201,13 +47353,17 @@ function filterMapForDiff(map, diff) {
         omittedInfraCount: infra.length - implicatedInfra.length,
         implicatedDbModels,
         omittedDbModelCount: dbModels.length - implicatedDbModels.length,
+        coveringSpecs,
+        uncoveredRoutes,
+        uncoveredEndpoints,
     };
 }
 function buildUserMessage(args) {
     const { diff, map, targetUrl } = args;
-    const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount, endpointsCalledByDiff, implicatedInfra, omittedInfraCount, implicatedDbModels, omittedDbModelCount, } = filterMapForDiff(map, diff);
+    const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount, endpointsCalledByDiff, implicatedInfra, omittedInfraCount, implicatedDbModels, omittedDbModelCount, coveringSpecs, uncoveredRoutes, uncoveredEndpoints, } = filterMapForDiff(map, diff);
     const totalInfra = (map.infra ?? []).length;
     const totalDbModels = (map.dbModels ?? []).length;
+    const totalSpecs = (map.specs ?? []).length;
     const totalEndpoints = (map.endpoints ?? []).length;
     const parts = [];
     parts.push(`# Route map (framework: ${map.framework})`);
@@ -47303,6 +47459,40 @@ function buildUserMessage(args) {
         if (omittedDbModelCount > 0) {
             parts.push("");
             parts.push(`(${omittedDbModelCount} other models exist in this project but are not affected by this diff.)`);
+        }
+    }
+    parts.push("");
+    parts.push(`# Existing test coverage (Playwright / Cypress)`);
+    if (totalSpecs === 0) {
+        parts.push("(no specs discovered — no e2e/, playwright/, or cypress/ directory found)");
+    }
+    else {
+        if (coveringSpecs.length === 0) {
+            parts.push(`(${totalSpecs} specs indexed; none cover the routes/endpoints touched by this diff)`);
+        }
+        else {
+            parts.push(`Specs that cover affected flows — prefer recommending these over writing new tests.`);
+            parts.push("");
+            for (const s of coveringSpecs) {
+                const setup = s.hasSharedSetup ? " [shared setup]" : "";
+                const ann = s.flowAnnotations.length > 0 ? ` (flow: ${s.flowAnnotations.join(", ")})` : "";
+                parts.push(`- ${s.file}: "${s.name}" — ${s.framework}${setup}${ann}`);
+                const covered = [];
+                if (s.routesCovered.length > 0)
+                    covered.push(`routes: ${s.routesCovered.join(", ")}`);
+                if (s.endpointsCovered.length > 0)
+                    covered.push(`endpoints: ${s.endpointsCovered.join(", ")}`);
+                if (covered.length > 0)
+                    parts.push(`  - covers ${covered.join("; ")}`);
+            }
+        }
+        if (uncoveredRoutes.length > 0 || uncoveredEndpoints.length > 0) {
+            parts.push("");
+            parts.push("Coverage gaps (implicated but no covering spec):");
+            for (const r of uncoveredRoutes)
+                parts.push(`- ${r}`);
+            for (const e of uncoveredEndpoints)
+                parts.push(`- ${e}`);
         }
     }
     parts.push("");

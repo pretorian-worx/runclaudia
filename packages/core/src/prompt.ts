@@ -6,6 +6,7 @@ import type {
   FileChange,
   InfraEntry,
   RouteEntry,
+  SpecEntry,
 } from "./types.js";
 
 export const SYSTEM_PROMPT = `You are claudia, a diff-aware test planner.
@@ -26,6 +27,8 @@ Rules:
 - coverageGaps captures *unmapped risk* — changes you can see have impact but no flow or endpoint in the map covers them.
 - Treat infrastructure changes as production-impact risk. If the diff includes Terraform/CDK resources and any endpoint in the diff touches the same service (per the endpoint's "services" annotation), call out the coordinated risk — e.g. "S3 bucket policy changed AND POST /api/attachments writes to S3, verify the write still succeeds end-to-end."
 - Treat database-schema changes as high-risk by default. Endpoints carry a "tables" annotation listing the DB models they touch (e.g. a Prisma call like prisma.bug.create(...) maps to ["Bug"]). When the diff changes the schema for a model AND an endpoint in the diff (or called by the diff) touches that model, call out the read/write contract explicitly — "the Bug model gained a non-null column; POST /api/bugs writes to Bug, verify the new column is populated."
+- When the prompt's "Existing test coverage" section lists specs that already cover the affected routes/endpoints, reference them by file:name in your suggestedChecks — e.g. "Run e2e/checkout.spec.ts:'completes checkout' against the deploy." Recommending existing specs is cheaper for the team than writing new ones and is preferred when coverage exists.
+- coverageGaps should call out flows the diff implicates that have NO existing spec — that's a concrete signal to the team to add one.
 - Be terse. The output is read by humans on a PR.`;
 
 /**
@@ -55,6 +58,12 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
   /** Database models whose schema file is in the diff. */
   implicatedDbModels: DbModelEntry[];
   omittedDbModelCount: number;
+  /** Specs whose coverage intersects with implicated routes or endpoints. */
+  coveringSpecs: SpecEntry[];
+  /** Routes implicated by the diff that have NO covering spec. */
+  uncoveredRoutes: string[];
+  /** Endpoints implicated by the diff that have NO covering spec. */
+  uncoveredEndpoints: string[];
 } {
   const diffPaths = new Set<string>();
   for (const f of diff.files) {
@@ -98,6 +107,26 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
   const dbModels = map.dbModels ?? [];
   const implicatedDbModels = dbModels.filter((m) => diffPaths.has(m.file));
 
+  // Spec coverage: a spec "covers" the diff if any of its tracked routes or
+  // endpoints intersects with the implicated set (direct OR called-by-diff).
+  const allImplicatedRoutes = new Set([
+    ...implicated.map((r) => r.route),
+  ]);
+  const allImplicatedEndpointRoutes = new Set([
+    ...implicatedEndpoints.map((e) => e.route),
+    ...endpointsCalledByDiff.map((s) => s.endpoint.route),
+  ]);
+  const specs = map.specs ?? [];
+  const coveringSpecs = specs.filter(
+    (s) =>
+      s.routesCovered.some((r) => allImplicatedRoutes.has(r)) ||
+      s.endpointsCovered.some((e) => allImplicatedEndpointRoutes.has(e)),
+  );
+  const coveredRoutes = new Set(coveringSpecs.flatMap((s) => s.routesCovered));
+  const coveredEndpoints = new Set(coveringSpecs.flatMap((s) => s.endpointsCovered));
+  const uncoveredRoutes = Array.from(allImplicatedRoutes).filter((r) => !coveredRoutes.has(r)).sort();
+  const uncoveredEndpoints = Array.from(allImplicatedEndpointRoutes).filter((e) => !coveredEndpoints.has(e)).sort();
+
   return {
     implicated,
     omittedCount: map.routes.length - implicated.length,
@@ -108,6 +137,9 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
     omittedInfraCount: infra.length - implicatedInfra.length,
     implicatedDbModels,
     omittedDbModelCount: dbModels.length - implicatedDbModels.length,
+    coveringSpecs,
+    uncoveredRoutes,
+    uncoveredEndpoints,
   };
 }
 
@@ -123,9 +155,13 @@ export function buildUserMessage(args: { diff: Diff; map: AppMap; targetUrl?: st
     omittedInfraCount,
     implicatedDbModels,
     omittedDbModelCount,
+    coveringSpecs,
+    uncoveredRoutes,
+    uncoveredEndpoints,
   } = filterMapForDiff(map, diff);
   const totalInfra = (map.infra ?? []).length;
   const totalDbModels = (map.dbModels ?? []).length;
+  const totalSpecs = (map.specs ?? []).length;
   const totalEndpoints = (map.endpoints ?? []).length;
   const parts: string[] = [];
 
@@ -221,6 +257,36 @@ export function buildUserMessage(args: { diff: Diff; map: AppMap; targetUrl?: st
     if (omittedDbModelCount > 0) {
       parts.push("");
       parts.push(`(${omittedDbModelCount} other models exist in this project but are not affected by this diff.)`);
+    }
+  }
+
+  parts.push("");
+  parts.push(`# Existing test coverage (Playwright / Cypress)`);
+  if (totalSpecs === 0) {
+    parts.push("(no specs discovered — no e2e/, playwright/, or cypress/ directory found)");
+  } else {
+    if (coveringSpecs.length === 0) {
+      parts.push(`(${totalSpecs} specs indexed; none cover the routes/endpoints touched by this diff)`);
+    } else {
+      parts.push(
+        `Specs that cover affected flows — prefer recommending these over writing new tests.`,
+      );
+      parts.push("");
+      for (const s of coveringSpecs) {
+        const setup = s.hasSharedSetup ? " [shared setup]" : "";
+        const ann = s.flowAnnotations.length > 0 ? ` (flow: ${s.flowAnnotations.join(", ")})` : "";
+        parts.push(`- ${s.file}: "${s.name}" — ${s.framework}${setup}${ann}`);
+        const covered: string[] = [];
+        if (s.routesCovered.length > 0) covered.push(`routes: ${s.routesCovered.join(", ")}`);
+        if (s.endpointsCovered.length > 0) covered.push(`endpoints: ${s.endpointsCovered.join(", ")}`);
+        if (covered.length > 0) parts.push(`  - covers ${covered.join("; ")}`);
+      }
+    }
+    if (uncoveredRoutes.length > 0 || uncoveredEndpoints.length > 0) {
+      parts.push("");
+      parts.push("Coverage gaps (implicated but no covering spec):");
+      for (const r of uncoveredRoutes) parts.push(`- ${r}`);
+      for (const e of uncoveredEndpoints) parts.push(`- ${e}`);
     }
   }
 
