@@ -42166,7 +42166,7 @@ const PlanSchema = objectType({
 const external_node_child_process_namespaceObject = require("node:child_process");
 ;// CONCATENATED MODULE: ../core/dist/diff.js
 
-function readDiff(opts) {
+function diff_readDiff(opts) {
     const { base, head, cwd } = opts;
     const range = `${base}..${head}`;
     const numstat = run(["git", "diff", "--numstat", "-z", range], cwd);
@@ -43107,7 +43107,7 @@ function isWildcardSegment(seg) {
 
 
 
-function loadOrBuildMap(opts) {
+function map_loadOrBuildMap(opts) {
     const rootDir = (0,external_node_path_namespaceObject.resolve)(opts.rootDir);
     const cachePath = opts.cachePath ?? (0,external_node_path_namespaceObject.join)(rootDir, ".claudia", "map.json");
     if (!opts.refresh && (0,external_node_fs_namespaceObject.existsSync)(cachePath)) {
@@ -47285,7 +47285,7 @@ Rules:
 - When the prompt's "Existing test coverage" section lists specs that already cover the affected routes/endpoints, reference them by file:name in your suggestedChecks — e.g. "Run e2e/checkout.spec.ts:'completes checkout' against the deploy." Recommending existing specs is cheaper for the team than writing new ones and is preferred when coverage exists.
 - coverageGaps should call out flows the diff implicates that have NO existing spec — that's a concrete signal to the team to add one.
 - Be terse. The output is read by humans on a PR.`;
-function filterMapForDiff(map, diff) {
+function prompt_filterMapForDiff(map, diff) {
     const diffPaths = new Set();
     for (const f of diff.files) {
         diffPaths.add(f.path);
@@ -47360,7 +47360,7 @@ function filterMapForDiff(map, diff) {
 }
 function buildUserMessage(args) {
     const { diff, map, targetUrl } = args;
-    const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount, endpointsCalledByDiff, implicatedInfra, omittedInfraCount, implicatedDbModels, omittedDbModelCount, coveringSpecs, uncoveredRoutes, uncoveredEndpoints, } = filterMapForDiff(map, diff);
+    const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount, endpointsCalledByDiff, implicatedInfra, omittedInfraCount, implicatedDbModels, omittedDbModelCount, coveringSpecs, uncoveredRoutes, uncoveredEndpoints, } = prompt_filterMapForDiff(map, diff);
     const totalInfra = (map.infra ?? []).length;
     const totalDbModels = (map.dbModels ?? []).length;
     const totalSpecs = (map.specs ?? []).length;
@@ -47672,8 +47672,8 @@ async function callPlanner(opts) {
 
 
 async function runPlan(opts) {
-    const diff = readDiff({ base: opts.base, head: opts.head, cwd: opts.rootDir });
-    const map = loadOrBuildMap({ rootDir: opts.rootDir, refresh: opts.refreshMap });
+    const diff = diff_readDiff({ base: opts.base, head: opts.head, cwd: opts.rootDir });
+    const map = map_loadOrBuildMap({ rootDir: opts.rootDir, refresh: opts.refreshMap });
     const skip = classifySkip(diff);
     if (skip.skip) {
         return {
@@ -47771,7 +47771,115 @@ function summarizeForCheck(plan, kind) {
     return `claudia: ${flows} flow${flows === 1 ? "" : "s"} to verify`;
 }
 //# sourceMappingURL=gating.js.map
+;// CONCATENATED MODULE: ../core/dist/select.js
+
+
+
+function runSelect(opts) {
+    const diff = readDiff({ base: opts.base, head: opts.head, cwd: opts.rootDir });
+    const map = loadOrBuildMap({ rootDir: opts.rootDir, refresh: opts.refreshMap });
+    const filtered = filterMapForDiff(map, diff);
+    // Group selected SpecEntry rows by file. Each entry in `coveringSpecs` is per-test;
+    // multiple tests in the same file share the file's metadata, so we collapse.
+    const byFile = new Map();
+    for (const s of filtered.coveringSpecs) {
+        let entry = byFile.get(s.file);
+        if (!entry) {
+            entry = {
+                framework: s.framework,
+                file: s.file,
+                tests: [],
+                hasSharedSetup: s.hasSharedSetup,
+            };
+            byFile.set(s.file, entry);
+        }
+        entry.tests.push(s.name);
+    }
+    const selected = Array.from(byFile.values()).map((s) => ({
+        ...s,
+        tests: Array.from(new Set(s.tests)).sort(),
+    }));
+    selected.sort((a, b) => a.file.localeCompare(b.file));
+    // For shared-setup files the whole describe block runs anyway, so don't bother
+    // emitting a grep — let the runner pick up everything in those files. We
+    // include them in `selected` so the user can see what got pulled in.
+    const grepEligible = selected.flatMap((s) => (s.hasSharedSetup ? [] : s.tests));
+    const playwrightGrep = grepEligible.length === 0 ? null : grepEligible.map(escapeForRegex).join("|");
+    const cypressSpecs = selected
+        .filter((s) => s.framework === "cypress")
+        .map((s) => s.file)
+        .join(",");
+    return {
+        totalSpecs: (map.specs ?? []).length,
+        selected,
+        selectedTestCount: selected.reduce((n, s) => n + s.tests.length, 0),
+        uncoveredRoutes: filtered.uncoveredRoutes,
+        uncoveredEndpoints: filtered.uncoveredEndpoints,
+        playwrightGrep,
+        cypressSpecs,
+    };
+}
+function escapeForRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function formatSelectionMarkdown(r, args) {
+    const lines = [];
+    lines.push("## claudia — spec selection");
+    lines.push("");
+    lines.push(`Diff: \`${args.base}..${args.head}\` · ${r.totalSpecs} specs indexed · ${r.selectedTestCount} selected.`);
+    lines.push("");
+    if (r.selected.length === 0) {
+        lines.push("**No covering specs.** ");
+        if (r.uncoveredRoutes.length > 0 || r.uncoveredEndpoints.length > 0) {
+            lines.push("Coverage gaps detected — the diff implicates flows that no existing spec covers.");
+            lines.push("");
+            lines.push("### Uncovered flows");
+            for (const x of r.uncoveredRoutes)
+                lines.push(`- ${x}`);
+            for (const x of r.uncoveredEndpoints)
+                lines.push(`- ${x}`);
+        }
+        else {
+            lines.push("Nothing to verify against prod.");
+        }
+        return lines.join("\n");
+    }
+    lines.push("### Selected specs");
+    for (const s of r.selected) {
+        const setup = s.hasSharedSetup ? " · [shared setup — whole file runs]" : "";
+        lines.push(`- **${s.file}** (${s.framework})${setup}`);
+        for (const t of s.tests)
+            lines.push(`  - \`${t}\``);
+    }
+    if (r.uncoveredRoutes.length > 0 || r.uncoveredEndpoints.length > 0) {
+        lines.push("");
+        lines.push("### Coverage gaps");
+        lines.push("Implicated by this diff, no covering spec — candidates for new tests:");
+        for (const x of r.uncoveredRoutes)
+            lines.push(`- ${x}`);
+        for (const x of r.uncoveredEndpoints)
+            lines.push(`- ${x}`);
+    }
+    lines.push("");
+    lines.push("### How to run");
+    if (r.playwrightGrep) {
+        lines.push("```bash");
+        lines.push(`npx playwright test --grep "${r.playwrightGrep}"`);
+        lines.push("```");
+    }
+    if (r.cypressSpecs) {
+        lines.push("```bash");
+        lines.push(`npx cypress run --spec "${r.cypressSpecs}"`);
+        lines.push("```");
+    }
+    if (!r.playwrightGrep && !r.cypressSpecs) {
+        lines.push("_All selected specs have shared setup; run the listed files directly._");
+    }
+    return lines.join("\n");
+}
+//# sourceMappingURL=select.js.map
 ;// CONCATENATED MODULE: ../core/dist/index.js
+
 
 
 

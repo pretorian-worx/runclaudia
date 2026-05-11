@@ -8,3 +8,5 @@ export { runPlan } from "./plan.js";
 export type { PlanRunOptions, PlanRunResult } from "./plan.js";
 export { decideGating } from "./gating.js";
 export type { GatingDecision, GatingMode, GatingOptions, RiskLevel } from "./gating.js";
+export { runSelect, formatSelectionMarkdown } from "./select.js";
+export type { SelectOptions, SelectionResult, SelectedSpec } from "./select.js";

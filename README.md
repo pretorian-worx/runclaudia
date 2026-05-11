@@ -83,9 +83,88 @@ The action posts the plan as a sticky PR comment that updates in place on subseq
 
 The check name is always `claudia / plan` — stable so consumers can reference it in branch protection rules.
 
+## Post-deploy verification — `claudia select`
+
+For teams running a full E2E suite pre-merge, the bigger win comes from running a *targeted subset* against the **deployed production artifact** after promotion. Pre-deploy CI verifies code is correct in isolation; post-deploy verification catches env var drift, real auth-provider config, CDN cache state, and IaC misconfiguration — failures that pre-deploy CI can't see.
+
+`claudia select` reads the diff between the last-deployed SHA and the just-deployed SHA, intersects it with the indexed spec coverage, and outputs the targeted spec subset:
+
+```bash
+# Default: human-readable markdown summary
+claudia select --base $LAST_DEPLOY_SHA --head $JUST_DEPLOYED_SHA
+
+# Machine-readable JSON for CI pipelines
+claudia select --base $LAST_DEPLOY_SHA --head $JUST_DEPLOYED_SHA --json
+
+# Just the Playwright --grep pattern (empty if nothing eligible)
+claudia select --base $LAST_DEPLOY_SHA --head $JUST_DEPLOYED_SHA --grep-only
+
+# Just selected spec file paths, one per line
+claudia select --base $LAST_DEPLOY_SHA --head $JUST_DEPLOYED_SHA --files-only
+```
+
+### Example: post-deploy verification workflow
+
+This is a separate workflow file from the PR-time `claudia.yml`. It runs after a deploy promotes to production and feeds claudia's selection into your existing Playwright invocation:
+
+```yaml
+name: claudia post-deploy verify
+on:
+  workflow_run:
+    workflows: ["Deploy to prod"]   # whatever your deploy workflow is named
+    types: [completed]
+
+jobs:
+  verify:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Resolve last-deployed SHA
+        id: last
+        run: |
+          # Read your "last successful prod deploy" SHA — adapt to your setup.
+          # Common patterns: a `prod` tag, the previous deploy's commit from
+          # GitHub Deployments API, a manually-maintained file, etc.
+          echo "sha=$(gh api repos/${{ github.repository }}/deployments \
+            --jq '[.[] | select(.environment=="production")] | .[1].sha')" >> $GITHUB_OUTPUT
+
+      - name: Select specs covering the diff
+        id: select
+        run: |
+          GREP=$(npx -y @claudia/cli select \
+            --base ${{ steps.last.outputs.sha }} \
+            --head ${{ github.event.workflow_run.head_sha }} \
+            --grep-only)
+          echo "grep=$GREP" >> $GITHUB_OUTPUT
+
+      - name: Run the selected specs against production
+        if: steps.select.outputs.grep != ''
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ vars.PROD_URL }}
+          TEST_USER_TOKEN: ${{ secrets.PROD_TEST_USER_TOKEN }}
+        run: npx playwright test --grep "${{ steps.select.outputs.grep }}"
+```
+
+Claudia handles the **selection** (which specs to run, given the diff). Your existing Playwright config handles **execution** (auth, base URL, reporting). Auth and runtime are intentionally outside v0.9 — they're well-served by what you've already wired up for pre-deploy CI.
+
+A future release will bundle execution + auth recipes + a Slack reporter, but the selection primitive works standalone today.
+
 ## Status
 
-v0.1 — early. Next.js App Router only. Expect rough edges.
+v0.9 — Mission A map foundation complete (routes, endpoints, infra, DB schema, spec coverage). PR-time plan-only advisor stable; post-deploy verification primitive (`claudia select`) just landed. Next.js App Router + Terraform + Prisma + Playwright/Cypress. Other frameworks/ORMs are incremental.
 
 ## Releases
 

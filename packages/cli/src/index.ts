@@ -2,7 +2,13 @@
 import { defineCommand, runMain } from "citty";
 import { resolve } from "node:path";
 import { writeFileSync } from "node:fs";
-import { loadOrBuildMap, PlannerError, runPlan } from "@claudia/core";
+import {
+  formatSelectionMarkdown,
+  loadOrBuildMap,
+  PlannerError,
+  runPlan,
+  runSelect,
+} from "@claudia/core";
 import { formatJson, formatMarkdown } from "./format.js";
 import { loadConfig } from "./config.js";
 import { aggregateRatings, formatRatings } from "./ratings.js";
@@ -69,6 +75,54 @@ const mapCmd = defineCommand({
   },
 });
 
+const selectCmd = defineCommand({
+  meta: {
+    name: "select",
+    description:
+      "Pick the subset of the user's existing Playwright/Cypress specs that cover the routes/endpoints implicated by a diff. Intended for post-deploy verification workflows.",
+  },
+  args: {
+    base: { type: "string", required: true, description: "Base ref (the last-deployed SHA)" },
+    head: { type: "string", default: "HEAD", description: "Head ref (the just-deployed SHA)" },
+    cwd: { type: "string", description: "Project root directory" },
+    json: { type: "boolean", description: "Emit JSON instead of markdown" },
+    "refresh-map": { type: "boolean", description: "Force a fresh map build" },
+    "grep-only": {
+      type: "boolean",
+      description: "Print just the Playwright --grep pattern (empty if no eligible specs)",
+    },
+    "files-only": {
+      type: "boolean",
+      description: "Print just the selected spec file paths, one per line",
+    },
+  },
+  run({ args }) {
+    const rootDir = resolve(args.cwd ?? process.cwd());
+    const result = runSelect({
+      rootDir,
+      base: args.base,
+      head: args.head,
+      refreshMap: Boolean(args["refresh-map"]),
+    });
+
+    if (args["grep-only"]) {
+      process.stdout.write((result.playwrightGrep ?? "") + "\n");
+      return;
+    }
+    if (args["files-only"]) {
+      for (const s of result.selected) process.stdout.write(s.file + "\n");
+      return;
+    }
+    if (args.json) {
+      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+      return;
+    }
+    process.stdout.write(
+      formatSelectionMarkdown(result, { base: args.base, head: args.head }) + "\n",
+    );
+  },
+});
+
 const ratingsCmd = defineCommand({
   meta: { name: "ratings", description: "Aggregate 👍/👎 reactions on claudia comments across a repo's PRs" },
   args: {
@@ -98,7 +152,7 @@ const ratingsCmd = defineCommand({
 
 const main = defineCommand({
   meta: { name: "claudia", description: "Diff-aware post-deploy test agent" },
-  subCommands: { plan: planCmd, map: mapCmd, ratings: ratingsCmd },
+  subCommands: { plan: planCmd, map: mapCmd, select: selectCmd, ratings: ratingsCmd },
 });
 
 runMain(main);
