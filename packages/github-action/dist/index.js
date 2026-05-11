@@ -47802,8 +47802,10 @@ function runSelect(opts) {
     selected.sort((a, b) => a.file.localeCompare(b.file));
     // For shared-setup files the whole describe block runs anyway, so don't bother
     // emitting a grep — let the runner pick up everything in those files. We
-    // include them in `selected` so the user can see what got pulled in.
-    const grepEligible = selected.flatMap((s) => (s.hasSharedSetup ? [] : s.tests));
+    // include them in `selected` so the user can see what got pulled in. The
+    // grep is specifically for `playwright test --grep`; Cypress is handled via
+    // `cypressSpecs` below.
+    const grepEligible = selected.flatMap((s) => s.framework === "playwright" && !s.hasSharedSetup ? s.tests : []);
     const playwrightGrep = grepEligible.length === 0 ? null : grepEligible.map(escapeForRegex).join("|");
     const cypressSpecs = selected
         .filter((s) => s.framework === "cypress")
