@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0](https://github.com/pretorian-worx/runclaudia/compare/v0.7.0...v0.8.0) (2026-05-11)
+
+
+### Features
+
+* claudia select — diff-aware spec selection for post-deploy verification ([d85d041](https://github.com/pretorian-worx/runclaudia/commit/d85d0415f1f1733f1c3398e887d5e4459b1383cc))
+* Stage C foundation — Playwright/Cypress spec indexer ([217f352](https://github.com/pretorian-worx/runclaudia/commit/217f35232d876d6521987b1e8db14e9e1684bf2f))
+
+
+### Bug Fixes
+
+* **ci:** rebuild action bundle after Cypress-only select regression fix ([021685b](https://github.com/pretorian-worx/runclaudia/commit/021685b7ed554cea38509cc063aeee4db4608f71))
+
 ## [0.7.0](https://github.com/pretorian-worx/runclaudia/compare/v0.6.0...v0.7.0) (2026-05-11)
 
 
