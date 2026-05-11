@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/pretorian-worx/runclaudia/compare/v0.5.0...v0.6.0) (2026-05-11)
+
+
+### Features
+
+* infrastructure adapter (Terraform) + AWS SDK service detection ([91e8167](https://github.com/pretorian-worx/runclaudia/commit/91e81671d7644257ec7a3cce50fcad1dfebfbd5c))
+
 ## [0.5.0](https://github.com/pretorian-worx/runclaudia/compare/v0.4.0...v0.5.0) (2026-05-11)
 
 
