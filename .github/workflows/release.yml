@@ -19,7 +19,12 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Using a fine-grained PAT instead of GITHUB_TOKEN because the
+          # pretorian-worx org policy blocks Actions-issued tokens from
+          # creating pull requests. The PAT acts as the user and bypasses
+          # that policy. Permissions on the token: Contents r/w, PRs r/w,
+          # scoped to runclaudia only.
+          token: ${{ secrets.RELEASE_PLEASE_PAT }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
