@@ -1,24 +1,54 @@
 {
-  "name": "@claudia/cli",
+  "name": "@pretorian-worx/runclaudia-cli",
   "version": "0.10.0",
   "type": "module",
+  "description": "Diff-aware post-deploy test agent CLI — picks a relevant Playwright subset for a diff and runs it against the deployed prod artifact, with reporting to GitHub Actions, the merged PR, and Slack.",
+  "keywords": [
+    "ci",
+    "testing",
+    "playwright",
+    "post-deploy",
+    "diff",
+    "qa",
+    "claude",
+    "anthropic"
+  ],
+  "license": "MIT",
+  "author": "Paul Schneider",
+  "homepage": "https://github.com/pretorian-worx/runclaudia#readme",
+  "bugs": {
+    "url": "https://github.com/pretorian-worx/runclaudia/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pretorian-worx/runclaudia.git",
+    "directory": "packages/cli"
+  },
   "bin": {
     "claudia": "./dist/index.js"
   },
   "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && chmod +x dist/index.js",
     "start": "node ./dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@claudia/core": "workspace:*",
+    "@pretorian-worx/runclaudia-core": "workspace:^",
     "citty": "^0.1.6"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0",
-    "@types/node": "^22.0.0"
+    "vitest": "^2.1.0"
   }
 }

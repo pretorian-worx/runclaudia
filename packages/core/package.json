@@ -1,11 +1,41 @@
 {
-  "name": "@claudia/core",
+  "name": "@pretorian-worx/runclaudia-core",
   "version": "0.10.0",
+  "description": "Core library for claudia — diff parser, framework adapters (Next.js / Terraform / Prisma / Playwright), prompt builder, Anthropic SDK wrapper, plan + selection + gating + runner primitives. Consumed by @pretorian-worx/runclaudia-cli and the runclaudia GitHub Action.",
   "type": "module",
+  "license": "MIT",
+  "author": "Paul Schneider",
+  "homepage": "https://github.com/pretorian-worx/runclaudia#readme",
+  "bugs": {
+    "url": "https://github.com/pretorian-worx/runclaudia/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pretorian-worx/runclaudia.git",
+    "directory": "packages/core"
+  },
+  "keywords": [
+    "ci",
+    "testing",
+    "playwright",
+    "post-deploy",
+    "diff",
+    "qa",
+    "claude",
+    "anthropic"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

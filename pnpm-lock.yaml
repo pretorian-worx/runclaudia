@@ -22,8 +22,8 @@ importers:
 
   packages/cli:
     dependencies:
-      '@claudia/core':
-        specifier: workspace:*
+      '@pretorian-worx/runclaudia-core':
+        specifier: workspace:^
         version: link:../core
       citty:
         specifier: ^0.1.6
@@ -66,10 +66,7 @@ importers:
       '@actions/github':
         specifier: ^6.0.0
         version: 6.0.1
-      '@claudia/cli':
-        specifier: workspace:*
-        version: link:../cli
-      '@claudia/core':
+      '@pretorian-worx/runclaudia-core':
         specifier: workspace:*
         version: link:../core
     devDependencies:

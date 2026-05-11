@@ -6,6 +6,7 @@ export { buildUserMessage, SYSTEM_PROMPT } from "./prompt.js";
 export { callPlanner, PlannerError } from "./llm.js";
 export { runPlan } from "./plan.js";
 export type { PlanRunOptions, PlanRunResult } from "./plan.js";
+export { formatPlanMarkdown, formatPlanJson } from "./plan-format.js";
 export { decideGating } from "./gating.js";
 export type { GatingDecision, GatingMode, GatingOptions, RiskLevel } from "./gating.js";
 export { runSelect, formatSelectionMarkdown } from "./select.js";

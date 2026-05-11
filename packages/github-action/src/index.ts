@@ -1,8 +1,14 @@
 import * as core from "@actions/core";
 import * as github from "@actions/github";
 import { resolve } from "node:path";
-import { decideGating, runPlan, type GatingMode, type RiskLevel } from "@claudia/core";
-import { formatJson, formatMarkdown } from "@claudia/cli/dist/format.js";
+import {
+  decideGating,
+  formatPlanJson as formatJson,
+  formatPlanMarkdown as formatMarkdown,
+  runPlan,
+  type GatingMode,
+  type RiskLevel,
+} from "@pretorian-worx/runclaudia-core";
 
 const STICKY_MARKER = "<!-- claudia:plan -->";
 const CHECK_NAME = "claudia / plan";

@@ -8,7 +8,7 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "cli": "pnpm --filter @claudia/cli start"
+    "cli": "pnpm --filter @pretorian-worx/runclaudia-cli start"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

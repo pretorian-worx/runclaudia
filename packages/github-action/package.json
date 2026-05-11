@@ -9,8 +9,7 @@
   "dependencies": {
     "@actions/core": "^1.11.1",
     "@actions/github": "^6.0.0",
-    "@claudia/cli": "workspace:*",
-    "@claudia/core": "workspace:*"
+    "@pretorian-worx/runclaudia-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

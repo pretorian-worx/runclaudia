@@ -15,7 +15,7 @@ import {
   PlannerError,
   runPlan,
   runSelect,
-} from "@claudia/core";
+} from "@pretorian-worx/runclaudia-core";
 import { formatJson, formatMarkdown } from "./format.js";
 import { loadConfig } from "./config.js";
 import { aggregateRatings, formatRatings } from "./ratings.js";
