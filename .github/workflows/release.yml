@@ -48,10 +48,15 @@ jobs:
           git tag -fa "$MAJOR_TAG" "$TAG_NAME" -m "$MAJOR_TAG → $TAG_NAME"
           git push --force origin "$MAJOR_TAG"
 
-  publish-npm:
+  publish-github-packages:
     needs: release-please
     if: needs.release-please.outputs.releases_created == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # `packages: write` lets the default GITHUB_TOKEN publish to GitHub
+      # Packages under the same org/repo. No personal NPM_TOKEN needed.
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,7 +69,8 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-          registry-url: "https://registry.npmjs.org"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@pretorian-worx"
 
       - run: pnpm install --frozen-lockfile
 
@@ -75,8 +81,8 @@ jobs:
       # already committed the version bump; the tree is otherwise clean here.
       - run: pnpm --filter @pretorian-worx/runclaudia-core publish --access public --no-git-checks
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: pnpm --filter @pretorian-worx/runclaudia-cli publish --access public --no-git-checks
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
