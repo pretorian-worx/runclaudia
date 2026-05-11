@@ -1,6 +1,6 @@
 {
   "name": "@claudia/github-action",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "scripts": {
     "build": "ncc build src/index.ts -o dist --target es2022",
