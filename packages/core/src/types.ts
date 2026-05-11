@@ -21,11 +21,26 @@ export interface RouteEntry {
   files: string[];
 }
 
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+
+export interface EndpointEntry {
+  /** URL path including the method prefix, e.g. "POST /api/bugs/move" */
+  route: string;
+  /** Bare URL path, e.g. "/api/bugs/move" */
+  path: string;
+  method: HttpMethod;
+  /** Source file that defines this handler. */
+  file: string;
+  /** Best-effort guess at the request body shape, e.g. "json", "formData", "text", or null if no body parsing detected. */
+  bodyShape: "json" | "formData" | "text" | "arrayBuffer" | null;
+}
+
 export interface AppMap {
   framework: "nextjs-app" | "unknown";
   generatedAt: string;
   rootDir: string;
   routes: RouteEntry[];
+  endpoints: EndpointEntry[];
   fileToRoutes: Record<string, string[]>;
 }
 

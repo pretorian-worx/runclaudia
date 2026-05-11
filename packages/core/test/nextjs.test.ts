@@ -41,4 +41,28 @@ describe("buildNextMap (Next.js App Router)", () => {
     const buttonKey = Object.keys(map.fileToRoutes).find((k) => k.endsWith("CheckoutButton.tsx"));
     expect(map.fileToRoutes[buttonKey!]).toEqual(["/checkout"]);
   });
+
+  it("discovers App Router route.ts endpoints with HTTP methods", () => {
+    const map = buildNextMap({ rootDir: FIXTURE });
+    const bugs = map.endpoints.filter((e) => e.path === "/api/bugs");
+    const methods = bugs.map((e) => e.method).sort();
+    expect(methods).toEqual(["GET", "POST"]);
+  });
+
+  it("infers body shape from req.json() / req.formData()", () => {
+    const map = buildNextMap({ rootDir: FIXTURE });
+    const post = map.endpoints.find((e) => e.path === "/api/bugs" && e.method === "POST");
+    expect(post?.bodyShape).toBe("json");
+    const get = map.endpoints.find((e) => e.path === "/api/bugs" && e.method === "GET");
+    expect(get?.bodyShape).toBeNull();
+    const upload = map.endpoints.find((e) => e.path === "/api/upload" && e.method === "POST");
+    expect(upload?.bodyShape).toBe("formData");
+  });
+
+  it("attributes endpoints back through fileToRoutes with method-prefixed keys", () => {
+    const map = buildNextMap({ rootDir: FIXTURE });
+    const bugsRoute = Object.keys(map.fileToRoutes).find((k) => k.endsWith("api/bugs/route.ts"));
+    expect(bugsRoute).toBeDefined();
+    expect(map.fileToRoutes[bugsRoute!]!.sort()).toEqual(["GET /api/bugs", "POST /api/bugs"]);
+  });
 });

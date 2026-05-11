@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import type { AppMap, RouteEntry } from "../types.js";
+import type { AppMap, EndpointEntry, HttpMethod, RouteEntry } from "../types.js";
 
 export interface NextAdapterOptions {
   rootDir: string;
@@ -10,16 +10,18 @@ export interface NextAdapterOptions {
 
 const ROUTE_FILES = ["page.tsx", "page.ts", "page.jsx", "page.js"];
 const LAYOUT_FILES = ["layout.tsx", "layout.ts", "layout.jsx", "layout.js"];
+const ENDPOINT_FILES = ["route.ts", "route.tsx", "route.js", "route.jsx"];
 
 export function buildNextMap(opts: NextAdapterOptions): AppMap {
   const rootDir = opts.rootDir;
   const appDir = opts.appDir ?? findAppDir(rootDir);
   const tsPaths = loadTsPaths(rootDir);
   const routes: RouteEntry[] = [];
+  const endpoints: EndpointEntry[] = [];
   const fileToRoutes: Record<string, string[]> = {};
 
   if (appDir) {
-    walk(appDir, "", appDir, rootDir, tsPaths, routes, fileToRoutes, opts.maxDepth ?? 12);
+    walk(appDir, "", appDir, rootDir, tsPaths, routes, endpoints, fileToRoutes, opts.maxDepth ?? 12);
   }
 
   return {
@@ -27,6 +29,7 @@ export function buildNextMap(opts: NextAdapterOptions): AppMap {
     generatedAt: new Date().toISOString(),
     rootDir,
     routes,
+    endpoints,
     fileToRoutes,
   };
 }
@@ -82,6 +85,7 @@ function walk(
   rootDir: string,
   tsPaths: TsPaths | null,
   routes: RouteEntry[],
+  endpoints: EndpointEntry[],
   fileToRoutes: Record<string, string[]>,
   remainingDepth: number,
 ): void {
@@ -89,6 +93,7 @@ function walk(
 
   const entries = readdirSync(dir, { withFileTypes: true });
   const pageFile = entries.find((e) => e.isFile() && ROUTE_FILES.includes(e.name));
+  const endpointFile = entries.find((e) => e.isFile() && ENDPOINT_FILES.includes(e.name));
 
   if (pageFile) {
     const route = routePath || "/";
@@ -108,12 +113,87 @@ function walk(
     }
   }
 
+  if (endpointFile) {
+    const path = routePath || "/";
+    const handlerAbs = join(dir, endpointFile.name);
+    const relFile = toRel(rootDir, handlerAbs);
+    const parsed = parseEndpointHandler(handlerAbs);
+    for (const m of parsed) {
+      endpoints.push({
+        route: `${m.method} ${path}`,
+        path,
+        method: m.method,
+        file: relFile,
+        bodyShape: m.bodyShape,
+      });
+    }
+    (fileToRoutes[relFile] ??= []).push(...parsed.map((m) => `${m.method} ${path}`));
+  }
+
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     if (entry.name.startsWith("_")) continue;
     const childRoute = segmentToRoute(entry.name, routePath);
-    walk(join(dir, entry.name), childRoute, appRoot, rootDir, tsPaths, routes, fileToRoutes, remainingDepth - 1);
+    walk(join(dir, entry.name), childRoute, appRoot, rootDir, tsPaths, routes, endpoints, fileToRoutes, remainingDepth - 1);
   }
+}
+
+const HTTP_METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+interface ParsedMethod {
+  method: HttpMethod;
+  bodyShape: EndpointEntry["bodyShape"];
+}
+
+function parseEndpointHandler(file: string): ParsedMethod[] {
+  let src: string;
+  try {
+    src = readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+
+  // Find each method's declaration position so we can slice its body region.
+  const positions: Array<{ method: HttpMethod; start: number }> = [];
+  for (const m of HTTP_METHODS) {
+    const re = new RegExp(
+      `export\\s+(?:async\\s+)?(?:function|const|let|var)\\s+${m}\\b|export\\s*\\{[^}]*\\b(?:[A-Za-z_$][\\w$]*\\s+as\\s+)?${m}\\b`,
+      "g",
+    );
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(src))) {
+      positions.push({ method: m, start: match.index });
+    }
+  }
+  if (positions.length === 0) return [];
+
+  positions.sort((a, b) => a.start - b.start);
+
+  const out: ParsedMethod[] = [];
+  for (let i = 0; i < positions.length; i++) {
+    const start = positions[i]!.start;
+    const end = i + 1 < positions.length ? positions[i + 1]!.start : src.length;
+    const body = src.slice(start, end);
+    out.push({ method: positions[i]!.method, bodyShape: detectBodyShape(body) });
+  }
+  return out;
+}
+
+// Look only at request-side body parsing — `req.json()`, `await request.formData()`,
+// etc. Specifically avoid matching `Response.json(...)` / `NextResponse.json(...)`
+// which are output, not input.
+const BODY_SHAPE_PATTERNS: Array<{ shape: EndpointEntry["bodyShape"]; re: RegExp }> = [
+  { shape: "json", re: /\b(?:req|request)\s*\.\s*json\s*\(/ },
+  { shape: "formData", re: /\b(?:req|request)\s*\.\s*formData\s*\(/ },
+  { shape: "text", re: /\b(?:req|request)\s*\.\s*text\s*\(/ },
+  { shape: "arrayBuffer", re: /\b(?:req|request)\s*\.\s*arrayBuffer\s*\(/ },
+];
+
+function detectBodyShape(src: string): EndpointEntry["bodyShape"] {
+  for (const { shape, re } of BODY_SHAPE_PATTERNS) {
+    if (re.test(src)) return shape;
+  }
+  return null;
 }
 
 function segmentToRoute(segment: string, parent: string): string {

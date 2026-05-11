@@ -11,6 +11,11 @@ const map: AppMap = {
     { route: "/about", files: ["app/about/page.tsx"] },
     { route: "/checkout", files: ["app/checkout/page.tsx", "app/checkout/Button.tsx"] },
   ],
+  endpoints: [
+    { route: "GET /api/bugs", path: "/api/bugs", method: "GET", file: "app/api/bugs/route.ts", bodyShape: null },
+    { route: "POST /api/bugs", path: "/api/bugs", method: "POST", file: "app/api/bugs/route.ts", bodyShape: "json" },
+    { route: "POST /api/upload", path: "/api/upload", method: "POST", file: "app/api/upload/route.ts", bodyShape: "formData" },
+  ],
   fileToRoutes: {},
 };
 
@@ -84,5 +89,27 @@ describe("buildUserMessage filtering", () => {
   it("notes when no routes are touched", () => {
     const msg = buildUserMessage({ diff: diff(["scripts/migrate.ts"]), map });
     expect(msg).toContain("none of the 3 known routes are touched by this diff");
+  });
+
+  it("includes implicated endpoints with method, path, and body shape", () => {
+    const msg = buildUserMessage({ diff: diff(["app/api/bugs/route.ts"]), map });
+    expect(msg).toContain("GET /api/bugs");
+    expect(msg).toContain("POST /api/bugs");
+    expect(msg).toContain("body: json");
+    expect(msg).not.toContain("POST /api/upload");
+    expect(msg).toContain("1 other endpoints exist in this project but are not affected by this diff.");
+  });
+
+  it("notes when no endpoints are touched", () => {
+    const msg = buildUserMessage({ diff: diff(["app/checkout/page.tsx"]), map });
+    expect(msg).toContain("none of the 3 known endpoints are touched by this diff");
+  });
+});
+
+describe("filterMapForDiff endpoints", () => {
+  it("returns implicated endpoints when the diff touches their handler file", () => {
+    const result = filterMapForDiff(map, diff(["app/api/bugs/route.ts"]));
+    expect(result.implicatedEndpoints.map((e) => e.route).sort()).toEqual(["GET /api/bugs", "POST /api/bugs"]);
+    expect(result.omittedEndpointCount).toBe(1);
   });
 });
