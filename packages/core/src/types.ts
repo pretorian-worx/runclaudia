@@ -40,6 +40,21 @@ export interface EndpointEntry {
    * imports in the handler source. E.g. ["s3", "dynamodb"]. Best-effort.
    */
   services: string[];
+  /**
+   * Database model/table names this endpoint touches, inferred from ORM
+   * client usage in the handler source (e.g. `prisma.bug.create(...)` →
+   * `["Bug"]`). Names are the canonical schema-side names. Best-effort.
+   */
+  tables: string[];
+}
+
+export interface DbModelEntry {
+  /** ORM that owns this model. */
+  orm: "prisma";
+  /** Canonical model name as declared in the schema (PascalCase for Prisma). */
+  name: string;
+  /** Schema file that declares this model. */
+  file: string;
 }
 
 export interface InfraEntry {
@@ -62,11 +77,14 @@ export interface AppMap {
   routes: RouteEntry[];
   endpoints: EndpointEntry[];
   infra: InfraEntry[];
+  dbModels: DbModelEntry[];
   fileToRoutes: Record<string, string[]>;
   /** Reverse index: file path → endpoint route strings (e.g. "POST /api/bugs") that file calls. */
   fileToEndpoints: Record<string, string[]>;
   /** Reverse index: file path → infra resource addresses declared in that file. */
   fileToInfra: Record<string, string[]>;
+  /** Reverse index: file path → DB model names declared in that file. */
+  fileToTables: Record<string, string[]>;
 }
 
 export const PlanFlowSchema = z.object({

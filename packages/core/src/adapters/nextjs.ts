@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { AppMap, EndpointEntry, HttpMethod, RouteEntry } from "../types.js";
 import { discoverTerraformResources } from "./terraform.js";
+import { detectPrismaTableUsage, discoverPrismaModels } from "./prisma.js";
 
 export interface NextAdapterOptions {
   rootDir: string;
@@ -53,6 +54,22 @@ export function buildNextMap(opts: NextAdapterOptions): AppMap {
   // project root, not just under appDir).
   const { infra, fileToInfra } = discoverTerraformResources({ rootDir });
 
+  // Fourth pass: DB schema discovery + per-endpoint table inference.
+  const { dbModels, fileToTables } = discoverPrismaModels({ rootDir });
+  const knownModelNames = dbModels.map((m) => m.name);
+  if (knownModelNames.length > 0) {
+    for (const e of endpoints) {
+      const abs = join(rootDir, e.file);
+      let handlerSrc: string;
+      try {
+        handlerSrc = readFileSync(abs, "utf8");
+      } catch {
+        continue;
+      }
+      e.tables = detectPrismaTableUsage(handlerSrc, knownModelNames);
+    }
+  }
+
   return {
     framework: "nextjs-app",
     generatedAt: new Date().toISOString(),
@@ -60,9 +77,11 @@ export function buildNextMap(opts: NextAdapterOptions): AppMap {
     routes,
     endpoints,
     infra,
+    dbModels,
     fileToRoutes,
     fileToEndpoints,
     fileToInfra,
+    fileToTables,
   };
 }
 
@@ -163,6 +182,7 @@ function walk(
         bodyShape: m.bodyShape,
         callers: [],
         services: parsed.services,
+        tables: [],
       });
     }
     (fileToRoutes[relFile] ??= []).push(...parsed.methods.map((m) => `${m.method} ${path}`));

@@ -24,6 +24,7 @@ const ep = (
   bodyShape: null,
   callers: [],
   services: [],
+  tables: [],
 });
 
 describe("detectEndpointCalls", () => {

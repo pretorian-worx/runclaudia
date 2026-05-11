@@ -12,12 +12,16 @@ const map: AppMap = {
     { route: "/checkout", files: ["app/checkout/page.tsx", "app/checkout/Button.tsx"] },
   ],
   endpoints: [
-    { route: "GET /api/bugs", path: "/api/bugs", method: "GET", file: "app/api/bugs/route.ts", bodyShape: null, callers: [], services: [] },
-    { route: "POST /api/bugs", path: "/api/bugs", method: "POST", file: "app/api/bugs/route.ts", bodyShape: "json", callers: ["app/checkout/Button.tsx"], services: [] },
-    { route: "POST /api/upload", path: "/api/upload", method: "POST", file: "app/api/upload/route.ts", bodyShape: "formData", callers: [], services: ["s3"] },
+    { route: "GET /api/bugs", path: "/api/bugs", method: "GET", file: "app/api/bugs/route.ts", bodyShape: null, callers: [], services: [], tables: ["Bug"] },
+    { route: "POST /api/bugs", path: "/api/bugs", method: "POST", file: "app/api/bugs/route.ts", bodyShape: "json", callers: ["app/checkout/Button.tsx"], services: [], tables: ["Bug"] },
+    { route: "POST /api/upload", path: "/api/upload", method: "POST", file: "app/api/upload/route.ts", bodyShape: "formData", callers: [], services: ["s3"], tables: [] },
   ],
   infra: [
     { tool: "terraform", type: "aws_s3_bucket", name: "uploads", address: "aws_s3_bucket.uploads", file: "infra/s3.tf" },
+  ],
+  dbModels: [
+    { orm: "prisma", name: "Bug", file: "prisma/schema.prisma" },
+    { orm: "prisma", name: "Workspace", file: "prisma/schema.prisma" },
   ],
   fileToRoutes: {},
   fileToEndpoints: {
@@ -25,6 +29,9 @@ const map: AppMap = {
   },
   fileToInfra: {
     "infra/s3.tf": ["aws_s3_bucket.uploads"],
+  },
+  fileToTables: {
+    "prisma/schema.prisma": ["Bug", "Workspace"],
   },
 };
 
@@ -177,5 +184,33 @@ describe("buildUserMessage infra + services rendering", () => {
   it("notes when no infrastructure is touched", () => {
     const msg = buildUserMessage({ diff: diff(["app/checkout/Button.tsx"]), map });
     expect(msg).toContain("none of the 1 known resources are touched by this diff");
+  });
+});
+
+describe("filterMapForDiff db models", () => {
+  it("surfaces db models whose schema file is in the diff", () => {
+    const result = filterMapForDiff(map, diff(["prisma/schema.prisma"]));
+    expect(result.implicatedDbModels.map((m) => m.name).sort()).toEqual(["Bug", "Workspace"]);
+    expect(result.omittedDbModelCount).toBe(0);
+  });
+});
+
+describe("buildUserMessage db schema rendering + table annotations", () => {
+  it("renders the DB schema section when the schema file is in the diff", () => {
+    const msg = buildUserMessage({ diff: diff(["prisma/schema.prisma"]), map });
+    expect(msg).toContain("# Database schema (Prisma)");
+    expect(msg).toContain("- Bug (prisma)");
+    expect(msg).toContain("- Workspace (prisma)");
+  });
+
+  it("annotates endpoints with their detected tables", () => {
+    const msg = buildUserMessage({ diff: diff(["app/api/bugs/route.ts"]), map });
+    expect(msg).toContain("POST /api/bugs");
+    expect(msg).toContain("tables: Bug");
+  });
+
+  it("notes when no db models are touched", () => {
+    const msg = buildUserMessage({ diff: diff(["app/checkout/Button.tsx"]), map });
+    expect(msg).toContain("none of the 2 known models are touched by this diff");
   });
 });

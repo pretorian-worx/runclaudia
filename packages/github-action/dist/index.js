@@ -1944,7 +1944,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getOctokit = exports.context = void 0;
 const Context = __importStar(__nccwpck_require__(4105));
-const utils_1 = __nccwpck_require__(447);
+const utils_1 = __nccwpck_require__(2828);
 exports.context = new Context.Context();
 /**
  * Returns a hydrated octokit ready to use for GitHub Actions
@@ -2038,7 +2038,7 @@ exports.getApiBaseUrl = getApiBaseUrl;
 
 /***/ }),
 
-/***/ 447:
+/***/ 2828:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -42437,7 +42437,89 @@ function toRel(rootDir, p) {
     return (0,external_node_path_namespaceObject.relative)(rootDir, p).split(external_node_path_namespaceObject.sep).join("/");
 }
 //# sourceMappingURL=terraform.js.map
+;// CONCATENATED MODULE: ../core/dist/adapters/prisma.js
+
+
+// `model NAME {` — Prisma models always start with an uppercase letter by convention,
+// but the language allows lowercase too. We accept both.
+const MODEL_RE = /^\s*model\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{/gm;
+/**
+ * Discover Prisma models. Looks at the canonical locations:
+ *   - <rootDir>/prisma/schema.prisma
+ *   - <rootDir>/prisma/schema/*.prisma   (multi-file schema, Prisma 5+)
+ *   - <rootDir>/schema.prisma            (less common, but supported)
+ */
+function discoverPrismaModels(opts) {
+    const { rootDir } = opts;
+    const candidates = [];
+    const rootSchema = (0,external_node_path_namespaceObject.join)(rootDir, "schema.prisma");
+    if ((0,external_node_fs_namespaceObject.existsSync)(rootSchema))
+        candidates.push(rootSchema);
+    const prismaDir = (0,external_node_path_namespaceObject.join)(rootDir, "prisma");
+    if ((0,external_node_fs_namespaceObject.existsSync)(prismaDir) && (0,external_node_fs_namespaceObject.statSync)(prismaDir).isDirectory()) {
+        const single = (0,external_node_path_namespaceObject.join)(prismaDir, "schema.prisma");
+        if ((0,external_node_fs_namespaceObject.existsSync)(single))
+            candidates.push(single);
+        const splitDir = (0,external_node_path_namespaceObject.join)(prismaDir, "schema");
+        if ((0,external_node_fs_namespaceObject.existsSync)(splitDir) && (0,external_node_fs_namespaceObject.statSync)(splitDir).isDirectory()) {
+            for (const entry of (0,external_node_fs_namespaceObject.readdirSync)(splitDir, { withFileTypes: true })) {
+                if (entry.isFile() && entry.name.endsWith(".prisma")) {
+                    candidates.push((0,external_node_path_namespaceObject.join)(splitDir, entry.name));
+                }
+            }
+        }
+    }
+    const dbModels = [];
+    const fileToTables = {};
+    for (const abs of candidates) {
+        const relFile = (0,external_node_path_namespaceObject.relative)(rootDir, abs).split(external_node_path_namespaceObject.sep).join("/");
+        let src;
+        try {
+            src = (0,external_node_fs_namespaceObject.readFileSync)(abs, "utf8");
+        }
+        catch {
+            continue;
+        }
+        MODEL_RE.lastIndex = 0;
+        let m;
+        while ((m = MODEL_RE.exec(src))) {
+            const name = m[1];
+            dbModels.push({ orm: "prisma", name, file: relFile });
+            (fileToTables[relFile] ??= []).push(name);
+        }
+    }
+    // Stable ordering for diff-stable cached maps.
+    dbModels.sort((a, b) => a.name.localeCompare(b.name));
+    for (const k of Object.keys(fileToTables)) {
+        fileToTables[k] = Array.from(new Set(fileToTables[k])).sort();
+    }
+    return { dbModels, fileToTables };
+}
+/**
+ * Detect Prisma-style ORM access in a handler source. Matches `prisma.X.op(...)`,
+ * `db.X.op(...)`, and `tx.X.op(...)` (transaction client). Returns canonical
+ * model names by case-insensitive lookup against the known model list — Prisma
+ * client usage is camelCase (`prisma.bug`) while the schema declares PascalCase
+ * (`model Bug`), so we normalize.
+ */
+function detectPrismaTableUsage(src, knownModels) {
+    if (knownModels.length === 0)
+        return [];
+    const knownByLower = new Map(knownModels.map((m) => [m.toLowerCase(), m]));
+    const re = /\b(?:prisma|db|tx)\s*\.\s*([a-z][A-Za-z0-9_]*)\s*\.\s*[A-Za-z_]\w*\s*\(/g;
+    const out = new Set();
+    let m;
+    while ((m = re.exec(src))) {
+        const camel = m[1];
+        const canonical = knownByLower.get(camel.toLowerCase());
+        if (canonical)
+            out.add(canonical);
+    }
+    return Array.from(out).sort();
+}
+//# sourceMappingURL=prisma.js.map
 ;// CONCATENATED MODULE: ../core/dist/adapters/nextjs.js
+
 
 
 
@@ -42483,6 +42565,22 @@ function buildNextMap(opts) {
     // Third pass: infrastructure discovery (framework-agnostic — runs at the
     // project root, not just under appDir).
     const { infra, fileToInfra } = discoverTerraformResources({ rootDir });
+    // Fourth pass: DB schema discovery + per-endpoint table inference.
+    const { dbModels, fileToTables } = discoverPrismaModels({ rootDir });
+    const knownModelNames = dbModels.map((m) => m.name);
+    if (knownModelNames.length > 0) {
+        for (const e of endpoints) {
+            const abs = (0,external_node_path_namespaceObject.join)(rootDir, e.file);
+            let handlerSrc;
+            try {
+                handlerSrc = (0,external_node_fs_namespaceObject.readFileSync)(abs, "utf8");
+            }
+            catch {
+                continue;
+            }
+            e.tables = detectPrismaTableUsage(handlerSrc, knownModelNames);
+        }
+    }
     return {
         framework: "nextjs-app",
         generatedAt: new Date().toISOString(),
@@ -42490,9 +42588,11 @@ function buildNextMap(opts) {
         routes,
         endpoints,
         infra,
+        dbModels,
         fileToRoutes,
         fileToEndpoints,
         fileToInfra,
+        fileToTables,
     };
 }
 function uniqSorted(xs) {
@@ -42570,6 +42670,7 @@ function nextjs_walk(dir, routePath, appRoot, rootDir, tsPaths, routes, endpoint
                 bodyShape: m.bodyShape,
                 callers: [],
                 services: parsed.services,
+                tables: [],
             });
         }
         (fileToRoutes[relFile] ??= []).push(...parsed.methods.map((m) => `${m.method} ${path}`));
@@ -42884,8 +42985,10 @@ function loadOrBuildMap(opts) {
         const hasNewerFields = cached &&
             Array.isArray(cached.endpoints) &&
             Array.isArray(cached.infra) &&
+            Array.isArray(cached.dbModels) &&
             cached.fileToEndpoints !== undefined &&
-            cached.fileToInfra !== undefined;
+            cached.fileToInfra !== undefined &&
+            cached.fileToTables !== undefined;
         if (hasNewerFields && cached && isFresh(cached, rootDir))
             return cached;
     }
@@ -47044,6 +47147,7 @@ Rules:
 - Set verdict to "skip" only if the diff genuinely cannot affect runtime behavior (already-filtered cases shouldn't reach you, so prefer "test").
 - coverageGaps captures *unmapped risk* — changes you can see have impact but no flow or endpoint in the map covers them.
 - Treat infrastructure changes as production-impact risk. If the diff includes Terraform/CDK resources and any endpoint in the diff touches the same service (per the endpoint's "services" annotation), call out the coordinated risk — e.g. "S3 bucket policy changed AND POST /api/attachments writes to S3, verify the write still succeeds end-to-end."
+- Treat database-schema changes as high-risk by default. Endpoints carry a "tables" annotation listing the DB models they touch (e.g. a Prisma call like prisma.bug.create(...) maps to ["Bug"]). When the diff changes the schema for a model AND an endpoint in the diff (or called by the diff) touches that model, call out the read/write contract explicitly — "the Bug model gained a non-null column; POST /api/bugs writes to Bug, verify the new column is populated."
 - Be terse. The output is read by humans on a PR.`;
 function filterMapForDiff(map, diff) {
     const diffPaths = new Set();
@@ -47085,6 +47189,8 @@ function filterMapForDiff(map, diff) {
     endpointsCalledByDiff.sort((a, b) => a.endpoint.route.localeCompare(b.endpoint.route));
     const infra = map.infra ?? [];
     const implicatedInfra = infra.filter((r) => diffPaths.has(r.file));
+    const dbModels = map.dbModels ?? [];
+    const implicatedDbModels = dbModels.filter((m) => diffPaths.has(m.file));
     return {
         implicated,
         omittedCount: map.routes.length - implicated.length,
@@ -47093,12 +47199,15 @@ function filterMapForDiff(map, diff) {
         endpointsCalledByDiff,
         implicatedInfra,
         omittedInfraCount: infra.length - implicatedInfra.length,
+        implicatedDbModels,
+        omittedDbModelCount: dbModels.length - implicatedDbModels.length,
     };
 }
 function buildUserMessage(args) {
     const { diff, map, targetUrl } = args;
-    const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount, endpointsCalledByDiff, implicatedInfra, omittedInfraCount, } = filterMapForDiff(map, diff);
+    const { implicated, omittedCount, implicatedEndpoints, omittedEndpointCount, endpointsCalledByDiff, implicatedInfra, omittedInfraCount, implicatedDbModels, omittedDbModelCount, } = filterMapForDiff(map, diff);
     const totalInfra = (map.infra ?? []).length;
+    const totalDbModels = (map.dbModels ?? []).length;
     const totalEndpoints = (map.endpoints ?? []).length;
     const parts = [];
     parts.push(`# Route map (framework: ${map.framework})`);
@@ -47177,6 +47286,26 @@ function buildUserMessage(args) {
         }
     }
     parts.push("");
+    parts.push(`# Database schema (Prisma)`);
+    if (totalDbModels === 0) {
+        parts.push("(no models discovered)");
+    }
+    else if (implicatedDbModels.length === 0) {
+        parts.push(`(none of the ${totalDbModels} known models are touched by this diff)`);
+    }
+    else {
+        parts.push(`Showing ${implicatedDbModels.length} of ${totalDbModels} known models — only those whose schema file is in the diff.`);
+        parts.push("");
+        for (const m of implicatedDbModels) {
+            parts.push(`- ${m.name} (${m.orm})`);
+            parts.push(`  - ${m.file}`);
+        }
+        if (omittedDbModelCount > 0) {
+            parts.push("");
+            parts.push(`(${omittedDbModelCount} other models exist in this project but are not affected by this diff.)`);
+        }
+    }
+    parts.push("");
     parts.push(`# Diff (${diff.base}..${diff.head})`);
     if (targetUrl)
         parts.push(`Deployed at: ${targetUrl}`);
@@ -47195,6 +47324,9 @@ function endpointAnnotations(e) {
     const services = e.services ?? [];
     if (services.length > 0)
         parts.push(`services: ${services.join(", ")}`);
+    const tables = e.tables ?? [];
+    if (tables.length > 0)
+        parts.push(`tables: ${tables.join(", ")}`);
     return parts.length > 0 ? ` (${parts.join("; ")})` : "";
 }
 function renderFile(f) {

@@ -21,8 +21,10 @@ export function loadOrBuildMap(opts: MapOptions): AppMap {
       cached &&
       Array.isArray(cached.endpoints) &&
       Array.isArray(cached.infra) &&
+      Array.isArray(cached.dbModels) &&
       cached.fileToEndpoints !== undefined &&
-      cached.fileToInfra !== undefined;
+      cached.fileToInfra !== undefined &&
+      cached.fileToTables !== undefined;
     if (hasNewerFields && cached && isFresh(cached, rootDir)) return cached;
   }
 

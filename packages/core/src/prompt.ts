@@ -1,4 +1,12 @@
-import type { AppMap, Diff, EndpointEntry, FileChange, InfraEntry, RouteEntry } from "./types.js";
+import type {
+  AppMap,
+  DbModelEntry,
+  Diff,
+  EndpointEntry,
+  FileChange,
+  InfraEntry,
+  RouteEntry,
+} from "./types.js";
 
 export const SYSTEM_PROMPT = `You are claudia, a diff-aware test planner.
 
@@ -17,6 +25,7 @@ Rules:
 - Set verdict to "skip" only if the diff genuinely cannot affect runtime behavior (already-filtered cases shouldn't reach you, so prefer "test").
 - coverageGaps captures *unmapped risk* — changes you can see have impact but no flow or endpoint in the map covers them.
 - Treat infrastructure changes as production-impact risk. If the diff includes Terraform/CDK resources and any endpoint in the diff touches the same service (per the endpoint's "services" annotation), call out the coordinated risk — e.g. "S3 bucket policy changed AND POST /api/attachments writes to S3, verify the write still succeeds end-to-end."
+- Treat database-schema changes as high-risk by default. Endpoints carry a "tables" annotation listing the DB models they touch (e.g. a Prisma call like prisma.bug.create(...) maps to ["Bug"]). When the diff changes the schema for a model AND an endpoint in the diff (or called by the diff) touches that model, call out the read/write contract explicitly — "the Bug model gained a non-null column; POST /api/bugs writes to Bug, verify the new column is populated."
 - Be terse. The output is read by humans on a PR.`;
 
 /**
@@ -43,6 +52,9 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
   /** Infrastructure resources whose declaration file is in the diff. */
   implicatedInfra: InfraEntry[];
   omittedInfraCount: number;
+  /** Database models whose schema file is in the diff. */
+  implicatedDbModels: DbModelEntry[];
+  omittedDbModelCount: number;
 } {
   const diffPaths = new Set<string>();
   for (const f of diff.files) {
@@ -83,6 +95,9 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
   const infra = map.infra ?? [];
   const implicatedInfra = infra.filter((r) => diffPaths.has(r.file));
 
+  const dbModels = map.dbModels ?? [];
+  const implicatedDbModels = dbModels.filter((m) => diffPaths.has(m.file));
+
   return {
     implicated,
     omittedCount: map.routes.length - implicated.length,
@@ -91,6 +106,8 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
     endpointsCalledByDiff,
     implicatedInfra,
     omittedInfraCount: infra.length - implicatedInfra.length,
+    implicatedDbModels,
+    omittedDbModelCount: dbModels.length - implicatedDbModels.length,
   };
 }
 
@@ -104,8 +121,11 @@ export function buildUserMessage(args: { diff: Diff; map: AppMap; targetUrl?: st
     endpointsCalledByDiff,
     implicatedInfra,
     omittedInfraCount,
+    implicatedDbModels,
+    omittedDbModelCount,
   } = filterMapForDiff(map, diff);
   const totalInfra = (map.infra ?? []).length;
+  const totalDbModels = (map.dbModels ?? []).length;
   const totalEndpoints = (map.endpoints ?? []).length;
   const parts: string[] = [];
 
@@ -184,6 +204,27 @@ export function buildUserMessage(args: { diff: Diff; map: AppMap; targetUrl?: st
   }
 
   parts.push("");
+  parts.push(`# Database schema (Prisma)`);
+  if (totalDbModels === 0) {
+    parts.push("(no models discovered)");
+  } else if (implicatedDbModels.length === 0) {
+    parts.push(`(none of the ${totalDbModels} known models are touched by this diff)`);
+  } else {
+    parts.push(
+      `Showing ${implicatedDbModels.length} of ${totalDbModels} known models — only those whose schema file is in the diff.`,
+    );
+    parts.push("");
+    for (const m of implicatedDbModels) {
+      parts.push(`- ${m.name} (${m.orm})`);
+      parts.push(`  - ${m.file}`);
+    }
+    if (omittedDbModelCount > 0) {
+      parts.push("");
+      parts.push(`(${omittedDbModelCount} other models exist in this project but are not affected by this diff.)`);
+    }
+  }
+
+  parts.push("");
   parts.push(`# Diff (${diff.base}..${diff.head})`);
   if (targetUrl) parts.push(`Deployed at: ${targetUrl}`);
   parts.push("");
@@ -202,6 +243,8 @@ function endpointAnnotations(e: EndpointEntry): string {
   if (e.bodyShape) parts.push(`body: ${e.bodyShape}`);
   const services = e.services ?? [];
   if (services.length > 0) parts.push(`services: ${services.join(", ")}`);
+  const tables = e.tables ?? [];
+  if (tables.length > 0) parts.push(`tables: ${tables.join(", ")}`);
   return parts.length > 0 ? ` (${parts.join("; ")})` : "";
 }
 
