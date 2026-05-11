@@ -32,12 +32,40 @@ claudia map --refresh
 ## GitHub Action
 
 ```yaml
-- uses: pretorian-worx/runclaudia@v0
-  with:
-    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+name: claudia
+on:
+  pull_request:
+    # Don't even spin up a runner for diffs that can't affect runtime behavior.
+    # claudia also classifies these internally and skips the LLM call, but
+    # paths-ignore saves the workflow startup time as well.
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.mdx'
+      - 'docs/**'
+      - 'LICENSE*'
+      - 'CHANGELOG*'
+      - 'pnpm-lock.yaml'
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'bun.lockb'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history; claudia needs base..head
+      - uses: pretorian-worx/runclaudia@v0
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-The action posts the plan as a sticky PR comment.
+The action posts the plan as a sticky PR comment that updates in place on subsequent commits to the same PR.
 
 ## Status
 
