@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/pretorian-worx/runclaudia/compare/v0.8.0...v0.9.0) (2026-05-11)
+
+
+### Features
+
+* claudia run — Playwright runner for post-deploy verification (Path A) ([1f003ab](https://github.com/pretorian-worx/runclaudia/commit/1f003ab62e1501df2e1fe2b7caa0bf58ff0a62d0))
+
 ## [0.8.0](https://github.com/pretorian-worx/runclaudia/compare/v0.7.0...v0.8.0) (2026-05-11)
 
 
