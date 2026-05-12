@@ -277,4 +277,98 @@ describe("formatGenerationMarkdown", () => {
     );
     expect(md).toContain("Nothing to generate");
   });
+
+  it("shows a passed-against-prod verdict when runOutcome is passed (B.2)", () => {
+    const md = formatGenerationMarkdown(
+      {
+        generated: [
+          {
+            flow: "/checkout",
+            filePath: "/x/.claudia/generated/checkout.spec.ts",
+            fileRel: ".claudia/generated/checkout.spec.ts",
+            contents: "test(\"checkout\", () => {});",
+            reasoning: "verifies render",
+            usage: { inputTokens: 100, outputTokens: 50, cacheCreationTokens: 0, cacheReadTokens: 0 },
+            runOutcome: { status: "passed", durationMs: 4321 },
+          },
+        ],
+        skippedFlows: [],
+        totalUsage: { inputTokens: 100, outputTokens: 50, cacheCreationTokens: 0, cacheReadTokens: 0 },
+        outDir: "/x/.claudia/generated",
+      },
+      { base: "a", head: "b" },
+    );
+    expect(md).toContain("✅ passes against prod");
+    expect(md).toContain("4.3s");
+  });
+
+  it("shows a failed-against-prod verdict with the failure body when runOutcome is failed (B.2)", () => {
+    const md = formatGenerationMarkdown(
+      {
+        generated: [
+          {
+            flow: "/checkout",
+            filePath: "/x/.claudia/generated/checkout.spec.ts",
+            fileRel: ".claudia/generated/checkout.spec.ts",
+            contents: "test(\"checkout\", () => {});",
+            reasoning: "verifies render",
+            usage: { inputTokens: 100, outputTokens: 50, cacheCreationTokens: 0, cacheReadTokens: 0 },
+            runOutcome: { status: "failed", durationMs: 5000, error: "Expected #pay to be visible" },
+          },
+        ],
+        skippedFlows: [],
+        totalUsage: { inputTokens: 100, outputTokens: 50, cacheCreationTokens: 0, cacheReadTokens: 0 },
+        outDir: "/x/.claudia/generated",
+      },
+      { base: "a", head: "b" },
+    );
+    expect(md).toContain("❌ fails against prod");
+    expect(md).toContain("Expected #pay to be visible");
+  });
+
+  it("shows an errored verdict when the run couldn't start (B.2)", () => {
+    const md = formatGenerationMarkdown(
+      {
+        generated: [
+          {
+            flow: "/x",
+            filePath: "/x/.claudia/generated/x.spec.ts",
+            fileRel: ".claudia/generated/x.spec.ts",
+            contents: "test(\"x\", () => {});",
+            reasoning: "r",
+            usage: { inputTokens: 1, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0 },
+            runOutcome: { status: "errored", error: "playwright exited with code 127" },
+          },
+        ],
+        skippedFlows: [],
+        totalUsage: { inputTokens: 1, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0 },
+        outDir: "/x",
+      },
+      { base: "a", head: "b" },
+    );
+    expect(md).toContain("⚠️ run errored");
+    expect(md).toContain("playwright exited with code 127");
+  });
+
+  it("shows a not-executed verdict when runOutcome is undefined (default B.1 path)", () => {
+    const md = formatGenerationMarkdown(
+      {
+        generated: [
+          {
+            flow: "/x",
+            filePath: "/x/.claudia/generated/x.spec.ts",
+            fileRel: ".claudia/generated/x.spec.ts",
+            contents: "test(\"x\", () => {});",
+            reasoning: "r",
+            usage: { inputTokens: 1, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0 },
+          },
+        ],
+        skippedFlows: [],
+        totalUsage: { inputTokens: 1, outputTokens: 1, cacheCreationTokens: 0, cacheReadTokens: 0 },
+        outDir: "/x",
+      },
+      { base: "a", head: "b" },
+    );
+    expect(md).toContain("📝 not executed");
+  });
 });

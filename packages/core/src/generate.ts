@@ -38,7 +38,17 @@ export interface GeneratedSpec {
     cacheCreationTokens: number;
     cacheReadTokens: number;
   };
+  /**
+   * Post-generation execution outcome, when claudia generate --run was used.
+   * undefined when the spec was generated but not executed.
+   */
+  runOutcome?: SpecRunOutcome;
 }
+
+export type SpecRunOutcome =
+  | { status: "passed"; durationMs: number }
+  | { status: "failed"; durationMs: number; error: string }
+  | { status: "errored"; error: string };
 
 export interface GenerationResult {
   generated: GeneratedSpec[];
@@ -90,12 +100,11 @@ const SPEC_INPUT_SCHEMA = z.object({
 const SYSTEM_PROMPT = `You are claudia's test generator. Your job: write a single Playwright spec file that verifies a specific user-facing flow works in production.
 
 Hard rules:
-- Match the style of the EXISTING SPEC sample in the prompt — same import paths, same navigation helpers, same assertion conventions.
-- Skip auth setup. The team's global-setup file handles login; specs are run with an authenticated context already.
-- Focus on the happy path: navigate to the route, verify key elements render, exercise one core interaction, assert no console errors.
-- Do NOT invent helpers that don't exist in the sample. If the sample uses \`appNav(page, path)\`, you use \`appNav\`. If it uses \`page.goto\` directly, you use \`page.goto\`.
-- Keep the spec short — 1 or 2 \`test()\` blocks. Verification, not exhaustive testing.
-- Generated specs are reviewed by a human before merging. Optimize for "obvious, easy to review, easy to delete if wrong" rather than "comprehensive."
+- **Imports**: ONLY import from \`@playwright/test\`. Do NOT import any project-internal helpers (e.g. \`./helpers/nav\`, \`@/lib/...\`). Generated specs live in \`.claudia/generated/\` where relative paths don't resolve. Use \`page.goto\`, \`page.click\`, \`expect\` directly. This means even if the sample spec in context uses a helper like \`appNav(page, path)\`, your generated spec should inline it as \`await page.goto(path)\`.
+- **Style otherwise**: match the EXISTING SPEC sample for assertion shape (\`expect(page.getByText(...)).toBeVisible()\`, \`{ timeout: ... }\`, \`describe\` blocks, etc.).
+- **Auth**: skip auth setup. The team's global-setup file handles login; specs run with an authenticated context.
+- **Scope**: focus on the happy path — navigate, verify key elements render, optionally exercise one core interaction. Keep it short: 1–2 \`test()\` blocks. Verification, not exhaustive testing.
+- **Reviewability**: generated specs are reviewed by a human before merging. Optimize for "obvious, easy to review, easy to delete if wrong" rather than "comprehensive."
 
 Output via the emit_spec tool, exactly once.`;
 
@@ -349,9 +358,20 @@ export function formatGenerationMarkdown(r: GenerationResult, args: { base: stri
   lines.push("");
 
   for (const g of r.generated) {
-    lines.push(`### \`${g.fileRel}\` — covers \`${g.flow}\``);
+    const verdict = g.runOutcome ? runVerdict(g.runOutcome) : "📝 not executed";
+    lines.push(`### ${verdict} — \`${g.fileRel}\` covers \`${g.flow}\``);
     lines.push("");
     lines.push(g.reasoning);
+    if (g.runOutcome && g.runOutcome.status === "failed") {
+      lines.push("");
+      lines.push("**Run failure:**");
+      lines.push("```");
+      lines.push(truncate(g.runOutcome.error, 1500));
+      lines.push("```");
+    } else if (g.runOutcome && g.runOutcome.status === "errored") {
+      lines.push("");
+      lines.push(`**Run could not start:** ${g.runOutcome.error}`);
+    }
     lines.push("");
     lines.push("```ts");
     lines.push(truncate(g.contents, 1200));
@@ -369,6 +389,17 @@ export function formatGenerationMarkdown(r: GenerationResult, args: { base: stri
   lines.push(`<sub>tokens: in ${u.inputTokens} (cache write ${u.cacheCreationTokens} / cache read ${u.cacheReadTokens}) · out ${u.outputTokens}</sub>`);
 
   return lines.join("\n");
+}
+
+function runVerdict(o: SpecRunOutcome): string {
+  switch (o.status) {
+    case "passed":
+      return `✅ passes against prod (${(o.durationMs / 1000).toFixed(1)}s)`;
+    case "failed":
+      return "❌ fails against prod";
+    case "errored":
+      return "⚠️ run errored";
+  }
 }
 
 // Hint to the index module that readdirSync is intentionally unused in this file's

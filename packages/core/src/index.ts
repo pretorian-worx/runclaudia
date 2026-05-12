@@ -17,6 +17,7 @@ export type {
   GenerateOptions,
   GeneratedSpec,
   GenerationResult,
+  SpecRunOutcome,
 } from "./generate.js";
 export type {
   RunCommandOptions,

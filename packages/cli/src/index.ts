@@ -305,7 +305,7 @@ const generateCmd = defineCommand({
   meta: {
     name: "generate",
     description:
-      "Draft Playwright specs for routes in the diff that have no existing coverage. Writes generated specs to .claudia/generated/ for human review — does not execute or auto-commit.",
+      "Draft Playwright specs for routes in the diff that have no existing coverage. By default writes drafts to .claudia/generated/ for human review. Add --run --target <url> to also execute each generated spec against the deployed URL and report pass/fail.",
   },
   args: {
     base: { type: "string", required: true, description: "Base ref (the last-deployed SHA)" },
@@ -314,10 +314,18 @@ const generateCmd = defineCommand({
     "out-dir": { type: "string", description: "Output directory for generated specs (default: <cwd>/.claudia/generated/)" },
     "max-flows": { type: "string", description: "Cap on how many uncovered routes to generate for in one run (default: 5)" },
     model: { type: "string", description: "Override the generator model (default: claude-sonnet-4-6)" },
+    run: { type: "boolean", description: "After generating, execute each draft against --target via npx playwright test" },
+    target: { type: "string", description: "Deployed URL to run generated specs against (required with --run)" },
+    "playwright-config": { type: "string", description: "Path to Playwright config file (only used with --run)" },
     json: { type: "boolean", description: "Emit JSON summary instead of markdown" },
   },
   async run({ args }) {
+    if (args.run && !args.target) {
+      process.stderr.write("claudia: --run requires --target <url>\n");
+      process.exit(2);
+    }
     const rootDir = resolve(args.cwd ?? process.cwd());
+
     let result;
     try {
       result = await runGenerate({
@@ -337,6 +345,13 @@ const generateCmd = defineCommand({
       throw err;
     }
 
+    // Phase B.2: optionally execute each draft against the target.
+    if (args.run && result.generated.length > 0 && args.target) {
+      for (const spec of result.generated) {
+        spec.runOutcome = await runGeneratedSpec(rootDir, spec.filePath, args.target, args["playwright-config"]);
+      }
+    }
+
     if (args.json) {
       process.stdout.write(JSON.stringify(result, null, 2) + "\n");
     } else {
@@ -344,6 +359,64 @@ const generateCmd = defineCommand({
     }
   },
 });
+
+/**
+ * Execute a single generated spec via `npx playwright test <file>` against the
+ * given target URL. Returns the post-run outcome. Reuses the same JSON-reporter
+ * + parsePlaywrightReport plumbing as `claudia run` so failure details are
+ * structured and serializable.
+ */
+async function runGeneratedSpec(
+  rootDir: string,
+  specFile: string,
+  target: string,
+  playwrightConfig: string | undefined,
+): Promise<import("@pretorian-worx/runclaudia-core").SpecRunOutcome> {
+  const tmpDir = mkdtempSync(join(tmpdir(), "claudia-gen-run-"));
+  const jsonReportPath = join(tmpDir, "report.json");
+
+  const args = ["-y", "playwright", "test", specFile, "--reporter=line,json"];
+  if (playwrightConfig) args.push("--config", playwrightConfig);
+
+  const env: Record<string, string> = {
+    ...process.env as Record<string, string>,
+    PLAYWRIGHT_BASE_URL: target,
+    PLAYWRIGHT_JSON_OUTPUT_FILE: jsonReportPath,
+    PLAYWRIGHT_JSON_OUTPUT_NAME: jsonReportPath,
+  };
+
+  process.stderr.write(`claudia: running generated spec ${specFile}\n`);
+
+  const child = spawn("npx", args, { cwd: rootDir, env, stdio: ["ignore", "inherit", "inherit"] });
+  const exitCode: number = await new Promise((resolveCode) => {
+    child.on("close", (code) => resolveCode(code ?? 1));
+    child.on("error", () => resolveCode(127));
+  });
+
+  if (!existsSync(jsonReportPath)) {
+    return {
+      status: "errored",
+      error: `playwright exited with code ${exitCode} and produced no JSON report`,
+    };
+  }
+  try {
+    const raw = JSON.parse(readFileSync(jsonReportPath, "utf8"));
+    const report = parsePlaywrightReport(raw);
+    if (report.failed === 0 && report.totalTests > 0) {
+      return { status: "passed", durationMs: report.durationMs };
+    }
+    if (report.totalTests === 0) {
+      return { status: "errored", error: "playwright ran but executed zero tests" };
+    }
+    const errMsg = report.failedTests.map((t) => `${t.title}: ${t.error}`).join("\n---\n");
+    return { status: "failed", durationMs: report.durationMs, error: errMsg || "(no error captured)" };
+  } catch (err) {
+    return {
+      status: "errored",
+      error: `could not parse playwright JSON report: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
 
 const ratingsCmd = defineCommand({
   meta: { name: "ratings", description: "Aggregate 👍/👎 reactions on claudia comments across a repo's PRs" },

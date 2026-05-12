@@ -222,7 +222,24 @@ Behaviour:
 - Outputs to `.claudia/generated/<flow>.spec.ts` for human review — **does not execute**, **does not auto-commit**.
 - Sanitizes model-supplied filenames (no path traversal, only safe chars, `.spec.ts` extension enforced).
 
-The intent is a draft a human reviews + moves into the real `e2e/` directory after reading. Phase 2 will add execution (run the generated spec against prod before suggesting it). Phase 3 will open a PR with the spec attached.
+The intent is a draft a human reviews + moves into the real `e2e/` directory after reading. Phase 3 will open a PR with passing specs attached.
+
+**Phase 2 (execute draft against prod):** add `--run --target <url>` to verify the draft actually works against the deployed code before a human reviews it:
+
+```bash
+claudia generate \
+  --base $LAST_DEPLOY_SHA \
+  --head $JUST_DEPLOYED_SHA \
+  --run \
+  --target https://app.example.com
+```
+
+Each generated draft now ships with a verdict in the markdown summary:
+
+- **✅ passes against prod** — the spec ran and the assertions held. High-confidence candidate to merge.
+- **❌ fails against prod** — the spec ran but failed. Either the spec is wrong (refine), the page is broken (real regression), or the team's global-setup didn't authenticate this run. Failure details inline.
+- **⚠️ run errored** — Playwright couldn't complete (config issue, no Playwright installed, generated spec syntactically broken). Skip rather than block.
+- **📝 not executed** — default for `claudia generate` without `--run`.
 
 Cost: one Anthropic call per uncovered route, only when a coverage gap actually exists. ~$0.05–0.20 per gap on Sonnet.
 
