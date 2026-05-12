@@ -222,7 +222,7 @@ Behaviour:
 - Outputs to `.claudia/generated/<flow>.spec.ts` for human review — **does not execute**, **does not auto-commit**.
 - Sanitizes model-supplied filenames (no path traversal, only safe chars, `.spec.ts` extension enforced).
 
-The intent is a draft a human reviews + moves into the real `e2e/` directory after reading. Phase 3 will open a PR with passing specs attached.
+The intent is a draft a human reviews. Phases 2 and 3 below close that loop end-to-end.
 
 **Phase 2 (execute draft against prod):** add `--run --target <url>` to verify the draft actually works against the deployed code before a human reviews it:
 
@@ -240,6 +240,33 @@ Each generated draft now ships with a verdict in the markdown summary:
 - **❌ fails against prod** — the spec ran but failed. Either the spec is wrong (refine), the page is broken (real regression), or the team's global-setup didn't authenticate this run. Failure details inline.
 - **⚠️ run errored** — Playwright couldn't complete (config issue, no Playwright installed, generated spec syntactically broken). Skip rather than block.
 - **📝 not executed** — default for `claudia generate` without `--run`.
+
+**Phase 3 (open a draft PR for passing drafts):** add `--pr` to bundle the loop end-to-end — generate, run against prod, and for each draft that passed, move it into your team's spec directory and open a **draft PR** via `gh`:
+
+```bash
+claudia generate \
+  --base $LAST_DEPLOY_SHA \
+  --head $JUST_DEPLOYED_SHA \
+  --run \
+  --target https://app.example.com \
+  --pr
+```
+
+What happens:
+
+1. claudia drafts specs for uncovered routes (`.claudia/generated/<flow>.spec.ts`)
+2. Each draft is executed against `--target`. Only **passing** drafts proceed.
+3. Passing drafts are moved into the team's spec directory (auto-detected from existing specs in the map; falls back to `e2e/`).
+4. claudia cuts a deterministic branch named `claudia/specs-<head-sha-short>` from your default branch.
+5. claudia commits the moved files, pushes the branch (`--force-with-lease` on re-runs), and opens a **draft PR**. If a PR already exists for that branch, it's updated in place.
+6. The PR body shows what each spec covers, its run duration against prod, and a note that the human is the final reviewer.
+
+Requirements:
+- `git` and `gh` available on PATH.
+- The workflow needs `contents: write` and `pull-requests: write` permissions (or a PAT — see [runclaudia README](https://github.com/pretorian-worx/runclaudia) for the org-policy notes).
+- Failed / errored drafts stay in `.claudia/generated/` and are NOT included in the PR.
+
+Add `--pr-dry-run` to plan the file moves and branch name without pushing or calling `gh`.
 
 Cost: one Anthropic call per uncovered route, only when a coverage gap actually exists. ~$0.05–0.20 per gap on Sonnet.
 

@@ -22,6 +22,7 @@ import { formatJson, formatMarkdown } from "./format.js";
 import { loadConfig } from "./config.js";
 import { aggregateRatings, formatRatings } from "./ratings.js";
 import { dispatchReporters } from "./reporters.js";
+import { openDraftPr } from "./pr.js";
 
 const planCmd = defineCommand({
   meta: { name: "plan", description: "Produce a diff-aware test plan" },
@@ -317,11 +318,24 @@ const generateCmd = defineCommand({
     run: { type: "boolean", description: "After generating, execute each draft against --target via npx playwright test" },
     target: { type: "string", description: "Deployed URL to run generated specs against (required with --run)" },
     "playwright-config": { type: "string", description: "Path to Playwright config file (only used with --run)" },
+    pr: {
+      type: "boolean",
+      description:
+        "After --run, move drafts that PASSED into the team's spec directory and open a draft PR via gh. Requires --run. Uses a deterministic branch (claudia/specs-<sha>) so re-runs update the same PR.",
+    },
+    "pr-dry-run": {
+      type: "boolean",
+      description: "Prepare the PR (move files, choose branch) but don't push or call gh.",
+    },
     json: { type: "boolean", description: "Emit JSON summary instead of markdown" },
   },
   async run({ args }) {
     if (args.run && !args.target) {
       process.stderr.write("claudia: --run requires --target <url>\n");
+      process.exit(2);
+    }
+    if (args.pr && !args.run) {
+      process.stderr.write("claudia: --pr requires --run (so we know which drafts passed)\n");
       process.exit(2);
     }
     const rootDir = resolve(args.cwd ?? process.cwd());
@@ -357,8 +371,59 @@ const generateCmd = defineCommand({
     } else {
       process.stdout.write(formatGenerationMarkdown(result, { base: args.base, head: args.head }) + "\n");
     }
+
+    // Phase B.3: optionally open a draft PR for drafts that passed.
+    if (args.pr) {
+      const map = loadOrBuildMap({ rootDir });
+      const headSha = resolveSha(rootDir, args.head);
+      const prResult = openDraftPr({
+        rootDir,
+        generation: result,
+        map,
+        headSha,
+        dryRun: Boolean(args["pr-dry-run"]),
+      });
+      process.stdout.write("\n");
+      process.stdout.write(formatPrResultMarkdown(prResult) + "\n");
+    }
   },
 });
+
+function formatPrResultMarkdown(r: import("./pr.js").PrResult): string {
+  const lines: string[] = ["## claudia — draft PR"];
+  switch (r.status) {
+    case "no-passing-drafts":
+      lines.push("");
+      lines.push("**No PR opened** — no drafts passed against prod.");
+      break;
+    case "dry-run":
+      lines.push("");
+      lines.push(`**Dry run.** Would have opened a PR for ${r.movedFiles.length} spec(s) on branch \`${r.branchName}\`.`);
+      lines.push("");
+      lines.push("Files prepared:");
+      for (const f of r.movedFiles) lines.push(`- \`${f}\``);
+      break;
+    case "skipped":
+      lines.push("");
+      lines.push(`**PR not opened** — see notes below.`);
+      break;
+    case "opened":
+      lines.push("");
+      lines.push(`**✅ Draft PR opened:** ${r.prUrl}`);
+      lines.push("");
+      lines.push(`Branch: \`${r.branchName}\``);
+      lines.push("");
+      lines.push(`Files moved into the team's spec directory:`);
+      for (const f of r.movedFiles) lines.push(`- \`${f}\``);
+      break;
+  }
+  if (r.notes.length > 0) {
+    lines.push("");
+    lines.push("### Notes");
+    for (const n of r.notes) lines.push(`- ${n}`);
+  }
+  return lines.join("\n");
+}
 
 /**
  * Execute a single generated spec via `npx playwright test <file>` against the
