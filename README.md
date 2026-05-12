@@ -224,10 +224,10 @@ test("getting started page loads", async ({ page }) => {
 });
 ```
 
-For cross-cutting suites that shouldn't be pulled in by transitive component reachability (smoke tests, error-state tests, etc.), exclude them via `claudia.config.ts`:
+For cross-cutting suites that shouldn't be pulled in by transitive component reachability (smoke tests, error-state tests, etc.), exclude them via `claudia.config.mjs` at the repo root:
 
-```ts
-// claudia.config.ts at the repo root
+```js
+// claudia.config.mjs
 export default {
   select: {
     excludeSpecs: [
@@ -238,6 +238,8 @@ export default {
   },
 };
 ```
+
+`.js` (in an ESM package — i.e. `"type": "module"` in `package.json`) works too. `.ts` is supported only if you're running claudia under a TS-aware loader like `tsx` or `ts-node`; on vanilla Node it'll print a warning and continue without loading. Stick to `.mjs` unless you have a specific reason.
 
 Or one-off via flag: `claudia run --exclude '**/smoke*.spec.ts,**/error-states*.spec.ts' ...`. Excluded specs still count as coverage — if `smoke.spec.ts` covers `/workspaces`, claudia won't surface `/workspaces` as a gap just because you've opted out of running smoke here.
 

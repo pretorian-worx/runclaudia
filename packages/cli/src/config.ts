@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 
 export interface ClaudiaConfig {
   rootDir?: string;
@@ -19,7 +19,12 @@ export interface ClaudiaConfig {
   };
 }
 
-const CANDIDATES = ["claudia.config.ts", "claudia.config.js", "claudia.config.mjs"];
+// Candidate filenames the loader tries, in order. `.mjs` and `.js` work on
+// any modern Node out of the box. `.ts` is kept in the list because some
+// users run claudia under a TS-aware loader (tsx, ts-node), but if Node
+// can't parse it we warn clearly rather than failing silently — see the
+// catch branch below.
+const CANDIDATES = ["claudia.config.mjs", "claudia.config.js", "claudia.config.ts"];
 
 export async function loadConfig(cwd: string): Promise<ClaudiaConfig> {
   for (const name of CANDIDATES) {
@@ -29,10 +34,21 @@ export async function loadConfig(cwd: string): Promise<ClaudiaConfig> {
       const mod = await import(pathToFileURL(abs).href);
       const cfg = (mod.default ?? mod) as ClaudiaConfig;
       return cfg ?? {};
-    } catch {
-      return {};
+    } catch (err) {
+      // Don't silently swallow — surface the error so users can diagnose.
+      // Continue trying remaining candidates: it's valid to have both a
+      // .ts (which may fail) and a fallback .mjs that loads.
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `claudia: found ${name} but failed to load it: ${msg}\n`,
+      );
+      if (name.endsWith(".ts")) {
+        process.stderr.write(
+          `claudia: TypeScript configs require a TS-aware loader (tsx, ts-node). ` +
+            `For a vanilla Node install, use claudia.config.mjs with .mjs syntax instead.\n`,
+        );
+      }
     }
   }
-  void join;
   return {};
 }
