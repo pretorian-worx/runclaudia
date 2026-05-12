@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/pretorian-worx/runclaudia/compare/v0.15.0...v0.16.0) (2026-05-12)
+
+
+### Features
+
+* claudia generate --pr opens a draft PR for passing drafts (Path B phase 3) ([84f4b1e](https://github.com/pretorian-worx/runclaudia/commit/84f4b1e4b15914e56ca058ee866b8d8d9e848238))
+
 ## [0.15.0](https://github.com/pretorian-worx/runclaudia/compare/v0.14.0...v0.15.0) (2026-05-12)
 
 
