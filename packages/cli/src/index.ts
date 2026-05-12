@@ -261,11 +261,24 @@ const runCmd = defineCommand({
 
     // Resolve the SHA we just verified so reporters can find the originating PR.
     const headSha = resolveSha(rootDir, args.head);
+    const passed = report ? report.failed === 0 : exitCode === 0;
     await dispatchReporters(
       {
         markdown,
         headSha,
-        passed: report ? report.failed === 0 : exitCode === 0,
+        passed,
+        slack: {
+          passed,
+          target: args.target,
+          selectedSpecCount: selection.selected.length,
+          selectedTestCount: selection.selectedTestCount,
+          passedCount: report?.passed ?? 0,
+          failedCount: report?.failed ?? 0,
+          skippedCount: report?.skipped,
+          flakyCount: report?.flaky,
+          durationMs: report?.durationMs,
+          failedTests: report?.failedTests,
+        },
       },
       {
         slackWebhook: args["slack-webhook"],

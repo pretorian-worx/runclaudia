@@ -1,5 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { buildSlackPayload, type SlackPayloadInput } from "./slack-format.js";
 
 const STICKY_MARKER = "<!-- claudia:verify -->";
 
@@ -12,6 +13,12 @@ export interface ReportContext {
   passed: boolean;
   /** Repo identifier "owner/name". Auto-detected from GITHUB_REPOSITORY when not set. */
   repo?: string;
+  /**
+   * Structured run data used to build the Slack Block Kit payload. When
+   * omitted, Slack receives a plain-markdown text post (legacy behavior).
+   * Step-summary + PR back-comment continue to use {@link markdown} unchanged.
+   */
+  slack?: Omit<SlackPayloadInput, "repo" | "headSha" | "prUrl" | "commitUrl" | "runUrl" | "branch">;
 }
 
 export interface ReporterOptions {
@@ -21,10 +28,30 @@ export interface ReporterOptions {
 }
 
 export async function dispatchReporters(ctx: ReportContext, opts: ReporterOptions = {}): Promise<void> {
+  // Look up the PR once and share it between the PR-comment sink (needs the
+  // number) and the Slack sink (wants a "View PR" button URL). Avoids two
+  // `gh api` round-trips and keeps the two sinks consistent on which PR they
+  // think this SHA belongs to.
+  const repo = ctx.repo ?? process.env.GITHUB_REPOSITORY;
+  const slackEnabled = Boolean(opts.slackWebhook ?? process.env.CLAUDIA_SLACK_WEBHOOK);
+  const prCommentEnabled = !opts.disablePrComment;
+  // Only look up the PR if at least one sink will use it. Avoids a `gh api`
+  // call (and the test surface that goes with it) when the user has fully
+  // opted out of PR-touching reporters.
+  let prNumber: number | null = null;
+  if (repo && ctx.headSha && (prCommentEnabled || slackEnabled)) {
+    try {
+      prNumber = findPullRequestForSha(repo, ctx.headSha);
+    } catch (err) {
+      warn("pr-lookup", err);
+    }
+  }
+  const prUrl = repo && prNumber ? `${process.env.GITHUB_SERVER_URL || "https://github.com"}/${repo}/pull/${prNumber}` : undefined;
+
   await Promise.allSettled([
     writeStepSummary(ctx, opts),
-    backCommentOnMergedPr(ctx, opts),
-    postToSlack(ctx, opts),
+    backCommentOnMergedPr(ctx, opts, repo, prNumber),
+    postToSlack(ctx, opts, prUrl),
   ]);
 }
 
@@ -43,20 +70,14 @@ async function writeStepSummary(ctx: ReportContext, opts: ReporterOptions): Prom
 
 // ---------- 2. PR back-comment ----------
 
-async function backCommentOnMergedPr(ctx: ReportContext, opts: ReporterOptions): Promise<void> {
+async function backCommentOnMergedPr(
+  ctx: ReportContext,
+  opts: ReporterOptions,
+  repo: string | undefined,
+  prNumber: number | null,
+): Promise<void> {
   if (opts.disablePrComment) return;
-  const repo = ctx.repo ?? process.env.GITHUB_REPOSITORY;
-  if (!repo) return;
-  if (!ctx.headSha) return;
-
-  let prNumber: number | null;
-  try {
-    prNumber = findPullRequestForSha(repo, ctx.headSha);
-  } catch (err) {
-    warn("pr-lookup", err);
-    return;
-  }
-  if (!prNumber) return;
+  if (!repo || !prNumber) return;
 
   const body = `${STICKY_MARKER}\n${ctx.markdown}`;
   try {
@@ -136,13 +157,21 @@ function upsertStickyComment(repo: string, prNumber: number, body: string): void
 
 // ---------- 3. Slack ----------
 
-async function postToSlack(ctx: ReportContext, opts: ReporterOptions): Promise<void> {
+async function postToSlack(ctx: ReportContext, opts: ReporterOptions, prUrl?: string): Promise<void> {
   const url = opts.slackWebhook ?? process.env.CLAUDIA_SLACK_WEBHOOK;
   if (!url) return;
   try {
-    const payload = {
-      text: ctx.markdown,
-    };
+    const payload = ctx.slack
+      ? buildSlackPayload({
+          ...ctx.slack,
+          repo: ctx.repo ?? process.env.GITHUB_REPOSITORY,
+          headSha: ctx.headSha,
+          commitUrl: commitUrlFor(ctx.repo ?? process.env.GITHUB_REPOSITORY, ctx.headSha),
+          runUrl: githubActionsRunUrl(),
+          branch: process.env.GITHUB_REF_NAME || undefined,
+          prUrl,
+        })
+      : { text: ctx.markdown };
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -154,6 +183,20 @@ async function postToSlack(ctx: ReportContext, opts: ReporterOptions): Promise<v
   } catch (err) {
     warn("slack", err);
   }
+}
+
+function commitUrlFor(repo: string | undefined, sha: string): string | undefined {
+  if (!repo || !sha) return undefined;
+  const server = process.env.GITHUB_SERVER_URL || "https://github.com";
+  return `${server}/${repo}/commit/${sha}`;
+}
+
+function githubActionsRunUrl(): string | undefined {
+  const server = process.env.GITHUB_SERVER_URL;
+  const repo = process.env.GITHUB_REPOSITORY;
+  const runId = process.env.GITHUB_RUN_ID;
+  if (!server || !repo || !runId) return undefined;
+  return `${server}/${repo}/actions/runs/${runId}`;
 }
 
 function warn(label: string, err: unknown): void {
