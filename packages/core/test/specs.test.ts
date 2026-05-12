@@ -58,6 +58,62 @@ describe("discoverSpecs — fixture", () => {
   });
 });
 
+describe("discoverSpecs — nav helper detection", () => {
+  it("captures route coverage from a `<helper>(page, '/path')` pattern", () => {
+    const root = tmpRepo();
+    mkdirSync(join(root, "e2e", "helpers"), { recursive: true });
+    writeFileSync(
+      join(root, "e2e", "helpers", "nav.ts"),
+      `export async function appNav(page, path) { await page.goto(path); }`,
+      "utf8",
+    );
+    writeFileSync(
+      join(root, "e2e", "docs.spec.ts"),
+      `
+        import { appNav } from "./helpers/nav";
+        test("docs index", async ({ page }) => {
+          await appNav(page, "/docs");
+        });
+      `,
+      "utf8",
+    );
+    const { specs } = discoverSpecs({ rootDir: root });
+    const docs = specs.find((s) => s.name === "docs index");
+    expect(docs?.routesCovered).toContain("/docs");
+  });
+
+  it("captures template-literal paths in helper-style nav", () => {
+    const root = tmpRepo();
+    mkdirSync(join(root, "e2e"), { recursive: true });
+    writeFileSync(
+      join(root, "e2e", "initiative-docs.spec.ts"),
+      "test(\"deep doc renders\", async ({ page }) => { await appNav(page, `/workspaces/${ws}/initiatives/${i}/docs/${p}`); });",
+      "utf8",
+    );
+    const { specs } = discoverSpecs({ rootDir: root });
+    expect(specs[0]?.routesCovered.some((r) => r.includes("/workspaces/"))).toBe(true);
+  });
+
+  it("filters non-route literals (screenshot paths, file paths, URLs)", () => {
+    const root = tmpRepo();
+    mkdirSync(join(root, "e2e"), { recursive: true });
+    writeFileSync(
+      join(root, "e2e", "weird.spec.ts"),
+      `
+        test("uses non-nav helpers", async ({ page }) => {
+          screenshot(page, "/tmp/foo.png");
+          assertText(page, "/some-text");
+          uploadFile(page, "/fixtures/data.json");
+          appNav(page, "/checkout");
+        });
+      `,
+      "utf8",
+    );
+    const { specs } = discoverSpecs({ rootDir: root });
+    expect(specs[0]?.routesCovered).toEqual(["/checkout"]);
+  });
+});
+
 describe("discoverSpecs — Cypress", () => {
   it("detects cypress framework + cy.visit / cy.request patterns", () => {
     const root = tmpRepo();

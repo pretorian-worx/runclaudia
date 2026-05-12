@@ -26,6 +26,24 @@ const TEST_BLOCK_RE = /\b(?:test|it)(?:\.\w+)?\s*\(\s*['"`]([^'"`\n]+)['"`]/g;
 const PAGE_GOTO_RE = /\bpage\s*\.\s*goto\s*\(\s*['"`]([^'"`\n]+)['"`]/g;
 const PAGE_REQUEST_RE = /\bpage\s*\.\s*request\s*\.\s*(get|post|put|patch|delete|head|options)\s*\(\s*['"`]([^'"`\n]+)['"`]/gi;
 const CY_VISIT_RE = /\bcy\s*\.\s*visit\s*\(\s*['"`]([^'"`\n]+)['"`]/g;
+
+// Navigation helper pattern: `appNav(page, "/path")`, `goto(page, "/path")`,
+// `visit(page, `/workspaces/${ws}/docs`)`, etc. Captures the path literal
+// from any function call where (a) the function name contains a nav-related
+// substring (nav, goto, visit, route, open) and (b) `page` is the first
+// argument and a path-like string is the second.
+//
+// Why this is needed: many teams wrap `page.goto(path, options)` in a helper
+// (waits for app shell, applies deployment-protection bypass cookies, etc).
+// Without this pattern, claudia sees those specs as having zero route
+// coverage and misses them during selection.
+//
+// Why the name constraint: without it, helpers like `assertText(page, "/x")`
+// or `screenshot(page, "/y")` would falsely contribute to routesCovered.
+// Constraining to navigation-shaped names removes that noise. Teams using
+// unconventional helper names (rare) can fall back to `// @claudia route:
+// /path` annotations as an explicit override.
+const NAV_HELPER_RE = /\b[A-Za-z_$][\w$]*?(?:nav|goto|visit|route|open|navigate)[\w$]*\s*\(\s*page\s*,\s*['"`]([^'"`\n]+)['"`]/gi;
 const CY_REQUEST_RE = /\bcy\s*\.\s*request\s*\(\s*['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]\s*,\s*['"`]([^'"`\n]+)['"`]/gi;
 const CY_REQUEST_OBJ_RE = /\bcy\s*\.\s*request\s*\(\s*\{\s*method\s*:\s*['"`](GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"`]\s*,\s*url\s*:\s*['"`]([^'"`\n]+)['"`]/gi;
 const FLOW_ANNOTATION_RE = /\/\/\s*@claudia\s+flow\s*:\s*([^\n]+)/gi;
@@ -105,7 +123,13 @@ function parseSpecFile(
   const framework = inferFramework(src, relFile);
   const hasSharedSetup = SHARED_SETUP_RE.test(src);
 
-  const routesCovered = uniqSorted(matchAll(PAGE_GOTO_RE, src, (m) => m[1]!).concat(matchAll(CY_VISIT_RE, src, (m) => m[1]!)));
+  const routesCovered = uniqSorted(
+    matchAll(PAGE_GOTO_RE, src, (m) => m[1]!)
+      .concat(matchAll(CY_VISIT_RE, src, (m) => m[1]!))
+      // Helper-pattern matches are post-filtered to path-shaped strings only
+      // (avoids false positives from non-navigation calls like screenshot()).
+      .concat(matchAll(NAV_HELPER_RE, src, (m) => m[1]!).filter(looksLikePath)),
+  );
 
   const endpointsCovered = uniqSorted(
     matchAll(PAGE_REQUEST_RE, src, (m) => `${m[1]!.toUpperCase()} ${m[2]!}`)
@@ -151,4 +175,12 @@ function matchAll<T>(re: RegExp, src: string, take: (m: RegExpExecArray) => T): 
 
 function uniqSorted(xs: string[]): string[] {
   return Array.from(new Set(xs)).sort();
+}
+
+function looksLikePath(s: string): boolean {
+  if (!s.startsWith("/")) return false;
+  if (/^[a-z]+:\/\//i.test(s)) return false;
+  // Drop obvious local-file paths (screenshots, fixtures).
+  if (/\.(?:png|jpe?g|gif|webp|svg|pdf|json|txt)$/i.test(s)) return false;
+  return true;
 }

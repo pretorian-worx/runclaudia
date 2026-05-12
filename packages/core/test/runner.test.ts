@@ -24,6 +24,7 @@ const baseSelection = (
   playwrightGrep: "creates a bug|lists bugs",
   cypressSpecs: "",
   diffFiles: ["src/app/api/bugs/route.ts", "src/components/CreateBugButton.tsx"],
+  excludedSpecFiles: [],
   ...overrides,
 });
 

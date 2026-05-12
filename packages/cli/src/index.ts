@@ -103,14 +103,22 @@ const selectCmd = defineCommand({
       type: "boolean",
       description: "Print just the selected spec file paths, one per line",
     },
+    exclude: {
+      type: "string",
+      description:
+        "Comma-separated glob patterns of spec files to exclude from selection (e.g. '**/smoke*.spec.ts,**/error-states*.spec.ts'). Merged with claudia.config.ts select.excludeSpecs.",
+    },
   },
-  run({ args }) {
+  async run({ args }) {
     const rootDir = resolve(args.cwd ?? process.cwd());
+    const cfg = await loadConfig(rootDir);
+    const excludeSpecs = mergeExcludePatterns(cfg.select?.excludeSpecs, args.exclude);
     const result = runSelect({
       rootDir,
       base: args.base,
       head: args.head,
       refreshMap: Boolean(args["refresh-map"]),
+      excludeSpecs,
     });
 
     if (args["grep-only"]) {
@@ -158,14 +166,22 @@ const runCmd = defineCommand({
       type: "boolean",
       description: "Disable posting a sticky comment back to the merged PR for this SHA",
     },
+    exclude: {
+      type: "string",
+      description:
+        "Comma-separated glob patterns of spec files to exclude from selection. Merged with claudia.config.ts select.excludeSpecs.",
+    },
   },
   async run({ args }) {
     const rootDir = resolve(args.cwd ?? process.cwd());
+    const cfg = await loadConfig(rootDir);
+    const excludeSpecs = mergeExcludePatterns(cfg.select?.excludeSpecs, args.exclude);
     const selection = runSelect({
       rootDir,
       base: args.base,
       head: args.head,
       refreshMap: Boolean(args["refresh-map"]),
+      excludeSpecs,
     });
 
     const tmpDir = mkdtempSync(join(tmpdir(), "claudia-run-"));
@@ -258,6 +274,22 @@ const runCmd = defineCommand({
     process.exit(exitCode);
   },
 });
+
+/**
+ * Combine excludeSpecs patterns from claudia.config.ts and the CLI --exclude
+ * flag. The CLI flag accepts a comma-separated list so a single argument can
+ * pass multiple patterns. Empty / whitespace-only entries are dropped.
+ */
+function mergeExcludePatterns(
+  fromConfig: string[] | undefined,
+  fromFlag: string | undefined,
+): string[] {
+  const flagPatterns = (fromFlag ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  return [...(fromConfig ?? []), ...flagPatterns];
+}
 
 function resolveSha(cwd: string, ref: string): string {
   try {

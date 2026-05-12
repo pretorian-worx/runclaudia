@@ -1,3 +1,4 @@
+import { minimatch } from "minimatch";
 import { readDiff } from "./diff.js";
 import { loadOrBuildMap } from "./map.js";
 import { filterMapForDiff } from "./prompt.js";
@@ -8,6 +9,17 @@ export interface SelectOptions {
   base: string;
   head: string;
   refreshMap?: boolean;
+  /**
+   * Glob patterns (minimatch-style) for spec files to exclude from selection.
+   * Excluded specs are never picked regardless of route coverage they declare.
+   *
+   * Semantics: excluded specs still count as coverage when computing
+   * uncoveredRoutes / uncoveredEndpoints — if you exclude a smoke test that
+   * covers /workspaces, claudia won't surface /workspaces as a gap. You're
+   * saying "I have coverage but don't want to run this spec here," not
+   * "this spec doesn't exist."
+   */
+  excludeSpecs?: string[];
 }
 
 export interface SelectedSpec {
@@ -31,6 +43,8 @@ export interface SelectionResult {
   cypressSpecs: string;
   /** Files in the diff (paths only), surfaced so downstream formatters can give the user diff context. */
   diffFiles: string[];
+  /** Spec files filtered out via excludeSpecs patterns, for transparency. */
+  excludedSpecFiles: string[];
 }
 
 export function runSelect(opts: SelectOptions): SelectionResult {
@@ -38,10 +52,23 @@ export function runSelect(opts: SelectOptions): SelectionResult {
   const map = loadOrBuildMap({ rootDir: opts.rootDir, refresh: opts.refreshMap });
   const filtered = filterMapForDiff(map, diff);
 
+  // Apply excludeSpecs filter BEFORE collapsing per-file. uncoveredRoutes /
+  // uncoveredEndpoints come from filtered (pre-exclusion), so excluded specs
+  // still count as coverage — see SelectOptions.excludeSpecs JSDoc.
+  const patterns = opts.excludeSpecs ?? [];
+  const isExcluded = (file: string) => patterns.some((p) => minimatch(file, p, { dot: true, matchBase: false }));
+
+  const excludedSpecFilesSet = new Set<string>();
+  const visibleSpecs = filtered.coveringSpecs.filter((s) => {
+    if (!isExcluded(s.file)) return true;
+    excludedSpecFilesSet.add(s.file);
+    return false;
+  });
+
   // Group selected SpecEntry rows by file. Each entry in `coveringSpecs` is per-test;
   // multiple tests in the same file share the file's metadata, so we collapse.
   const byFile = new Map<string, SelectedSpec>();
-  for (const s of filtered.coveringSpecs) {
+  for (const s of visibleSpecs) {
     let entry = byFile.get(s.file);
     if (!entry) {
       entry = {
@@ -85,6 +112,7 @@ export function runSelect(opts: SelectOptions): SelectionResult {
     playwrightGrep,
     cypressSpecs,
     diffFiles: diff.files.map((f) => f.path),
+    excludedSpecFiles: Array.from(excludedSpecFilesSet).sort(),
   };
 }
 
@@ -116,8 +144,9 @@ export function formatSelectionMarkdown(r: SelectionResult, args: { base: string
   const lines: string[] = [];
   lines.push("## claudia — spec selection");
   lines.push("");
+  const excludeNote = r.excludedSpecFiles.length > 0 ? ` · ${r.excludedSpecFiles.length} spec file(s) excluded` : "";
   lines.push(
-    `Diff: \`${args.base}..${args.head}\` — ${describeDiff(r.diffFiles)} · ${r.totalSpecs} specs indexed · ${r.selectedTestCount} selected.`,
+    `Diff: \`${args.base}..${args.head}\` — ${describeDiff(r.diffFiles)} · ${r.totalSpecs} specs indexed · ${r.selectedTestCount} selected${excludeNote}.`,
   );
   lines.push("");
 

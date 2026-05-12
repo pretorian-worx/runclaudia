@@ -205,6 +205,42 @@ Target: `https://app.example.com`
 
 A future release will add pluggable auth recipes (Clerk/Auth0/NextAuth/Supabase/Cognito starters); until then teams with auth already wired for pre-deploy E2E can adopt `claudia run` today by pointing it at production.
 
+### Tuning what gets selected
+
+Claudia recognizes two navigation patterns when indexing your specs:
+
+```ts
+page.goto("/docs")                      // direct
+appNav(page, "/docs")                   // helper — function name needs to contain
+goto(page, `/workspaces/${ws}/docs`)    // nav/goto/visit/route/open/navigate
+```
+
+If your team uses an unconventional helper name, fall back to a comment annotation on the test:
+
+```ts
+// @claudia route: /docs/getting-started
+test("getting started page loads", async ({ page }) => {
+  await myCustomHelper(page);
+});
+```
+
+For cross-cutting suites that shouldn't be pulled in by transitive component reachability (smoke tests, error-state tests, etc.), exclude them via `claudia.config.ts`:
+
+```ts
+// claudia.config.ts at the repo root
+export default {
+  select: {
+    excludeSpecs: [
+      "**/smoke*.spec.ts",
+      "**/error-states*.spec.ts",
+      "**/production-smoke.spec.ts",
+    ],
+  },
+};
+```
+
+Or one-off via flag: `claudia run --exclude '**/smoke*.spec.ts,**/error-states*.spec.ts' ...`. Excluded specs still count as coverage — if `smoke.spec.ts` covers `/workspaces`, claudia won't surface `/workspaces` as a gap just because you've opted out of running smoke here.
+
 ### Where the result surfaces
 
 `claudia run` auto-detects reporting destinations from context. All three skip silently when not applicable:

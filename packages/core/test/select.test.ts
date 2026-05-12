@@ -160,6 +160,138 @@ describe("runSelect — uncovered case", () => {
   });
 });
 
+describe("runSelect — excludeSpecs", () => {
+  const mapWithSmoke = () =>
+    makeMap({
+      specs: [
+        {
+          framework: "playwright",
+          file: "e2e/bugs.spec.ts",
+          name: "creates a bug",
+          routesCovered: [],
+          endpointsCovered: ["POST /api/bugs"],
+          hasSharedSetup: false,
+          flowAnnotations: [],
+        },
+        {
+          framework: "playwright",
+          file: "e2e/smoke.spec.ts",
+          name: "smoke loads",
+          routesCovered: [],
+          endpointsCovered: ["POST /api/bugs"],
+          hasSharedSetup: false,
+          flowAnnotations: [],
+        },
+      ],
+    });
+
+  it("drops matching specs from the selection", () => {
+    stub(mapWithSmoke(), ["app/api/bugs/route.ts"]);
+    const r = runSelect({
+      rootDir: "/repo",
+      base: "a",
+      head: "b",
+      excludeSpecs: ["**/smoke*.spec.ts"],
+    });
+    expect(r.selected.map((s) => s.file)).toEqual(["e2e/bugs.spec.ts"]);
+    expect(r.excludedSpecFiles).toEqual(["e2e/smoke.spec.ts"]);
+  });
+
+  it("excluded specs do NOT cause routes/endpoints to appear as coverage gaps", () => {
+    // Both bugs.spec and smoke.spec cover POST /api/bugs. Excluding smoke
+    // should still leave POST /api/bugs as 'covered' because bugs.spec covers
+    // it too. But even if smoke were the ONLY cover, the route shouldn't
+    // surface as a gap — excluded ≠ doesn't exist.
+    const map = makeMap({
+      specs: [
+        {
+          framework: "playwright",
+          file: "e2e/smoke.spec.ts",
+          name: "smoke",
+          routesCovered: [],
+          endpointsCovered: ["POST /api/bugs"],
+          hasSharedSetup: false,
+          flowAnnotations: [],
+        },
+      ],
+    });
+    stub(map, ["app/api/bugs/route.ts"]);
+    const r = runSelect({
+      rootDir: "/repo",
+      base: "a",
+      head: "b",
+      excludeSpecs: ["**/smoke*.spec.ts"],
+    });
+    expect(r.selected).toEqual([]);
+    expect(r.excludedSpecFiles).toEqual(["e2e/smoke.spec.ts"]);
+    // POST /api/bugs is NOT in uncoveredEndpoints — smoke covered it, exclusion
+    // doesn't retroactively un-cover it.
+    expect(r.uncoveredEndpoints).not.toContain("POST /api/bugs");
+  });
+
+  it("supports multiple glob patterns", () => {
+    const map = makeMap({
+      specs: [
+        {
+          framework: "playwright",
+          file: "e2e/bugs.spec.ts",
+          name: "real",
+          routesCovered: [],
+          endpointsCovered: ["POST /api/bugs"],
+          hasSharedSetup: false,
+          flowAnnotations: [],
+        },
+        {
+          framework: "playwright",
+          file: "e2e/smoke.spec.ts",
+          name: "s",
+          routesCovered: [],
+          endpointsCovered: ["POST /api/bugs"],
+          hasSharedSetup: false,
+          flowAnnotations: [],
+        },
+        {
+          framework: "playwright",
+          file: "e2e/error-states.spec.ts",
+          name: "e",
+          routesCovered: [],
+          endpointsCovered: ["POST /api/bugs"],
+          hasSharedSetup: false,
+          flowAnnotations: [],
+        },
+      ],
+    });
+    stub(map, ["app/api/bugs/route.ts"]);
+    const r = runSelect({
+      rootDir: "/repo",
+      base: "a",
+      head: "b",
+      excludeSpecs: ["**/smoke*.spec.ts", "**/error-states*.spec.ts"],
+    });
+    expect(r.selected.map((s) => s.file)).toEqual(["e2e/bugs.spec.ts"]);
+    expect(r.excludedSpecFiles.sort()).toEqual(["e2e/error-states.spec.ts", "e2e/smoke.spec.ts"]);
+  });
+
+  it("no exclusion patterns = no specs excluded", () => {
+    stub(mapWithSmoke(), ["app/api/bugs/route.ts"]);
+    const r = runSelect({ rootDir: "/repo", base: "a", head: "b" });
+    expect(r.excludedSpecFiles).toEqual([]);
+    expect(r.selected).toHaveLength(2);
+  });
+
+  it("excludes show up in the markdown summary footer", () => {
+    stub(mapWithSmoke(), ["app/api/bugs/route.ts"]);
+    const r = runSelect({
+      rootDir: "/repo",
+      base: "a",
+      head: "b",
+      excludeSpecs: ["**/smoke*.spec.ts"],
+    });
+    const md = formatSelectionMarkdown(r, { base: "a", head: "b" });
+    expect(md).toContain("1 spec file(s) excluded");
+  });
+});
+
 describe("formatSelectionMarkdown", () => {
   it("renders selected files + test names + Playwright run command", () => {
     stub(makeMap(), ["app/api/bugs/route.ts"]);

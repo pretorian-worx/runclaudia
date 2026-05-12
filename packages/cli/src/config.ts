@@ -7,6 +7,16 @@ export interface ClaudiaConfig {
   defaultBase?: string;
   model?: string;
   cachePath?: string;
+  select?: {
+    /**
+     * Glob patterns (minimatch-style) for spec files to exclude from `claudia
+     * select` / `claudia run`. Useful for cross-cutting smoke/error-state
+     * suites that aren't tied to specific code paths and shouldn't be
+     * pulled in by transitive reachability. See SelectOptions.excludeSpecs
+     * in @pretorian-worx/runclaudia-core for full semantics.
+     */
+    excludeSpecs?: string[];
+  };
 }
 
 const CANDIDATES = ["claudia.config.ts", "claudia.config.js", "claudia.config.mjs"];
