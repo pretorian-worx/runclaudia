@@ -29,6 +29,8 @@ export interface SelectionResult {
   playwrightGrep: string | null;
   /** Cypress --spec pattern: comma-joined list of spec files. */
   cypressSpecs: string;
+  /** Files in the diff (paths only), surfaced so downstream formatters can give the user diff context. */
+  diffFiles: string[];
 }
 
 export function runSelect(opts: SelectOptions): SelectionResult {
@@ -82,6 +84,7 @@ export function runSelect(opts: SelectOptions): SelectionResult {
     uncoveredEndpoints: filtered.uncoveredEndpoints,
     playwrightGrep,
     cypressSpecs,
+    diffFiles: diff.files.map((f) => f.path),
   };
 }
 
@@ -89,23 +92,46 @@ function escapeForRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Short human-readable diff size, e.g. "3 files changed" or "1 file changed (path/to/x.ts)". */
+export function describeDiff(files: string[]): string {
+  if (files.length === 0) return "no files changed";
+  if (files.length === 1) return `1 file changed (\`${files[0]}\`)`;
+  return `${files.length} files changed`;
+}
+
+/**
+ * Render a small "what was in the diff" hint so users on no-op verdicts can
+ * see at a glance that claudia actually inspected something. Shows up to 5
+ * paths and trails with "...and N more" for longer diffs.
+ */
+export function diffSampleBlock(files: string[], limit = 5): string {
+  if (files.length === 0) return "_(no files in diff)_";
+  if (files.length === 1) return `Changed: \`${files[0]}\``;
+  const head = files.slice(0, limit).map((f) => `- \`${f}\``);
+  const tail = files.length > limit ? `\n_…and ${files.length - limit} more_` : "";
+  return `Changed:\n${head.join("\n")}${tail}`;
+}
+
 export function formatSelectionMarkdown(r: SelectionResult, args: { base: string; head: string }): string {
   const lines: string[] = [];
   lines.push("## claudia — spec selection");
   lines.push("");
-  lines.push(`Diff: \`${args.base}..${args.head}\` · ${r.totalSpecs} specs indexed · ${r.selectedTestCount} selected.`);
+  lines.push(
+    `Diff: \`${args.base}..${args.head}\` — ${describeDiff(r.diffFiles)} · ${r.totalSpecs} specs indexed · ${r.selectedTestCount} selected.`,
+  );
   lines.push("");
 
   if (r.selected.length === 0) {
-    lines.push("**No covering specs.** ");
     if (r.uncoveredRoutes.length > 0 || r.uncoveredEndpoints.length > 0) {
-      lines.push("Coverage gaps detected — the diff implicates flows that no existing spec covers.");
+      lines.push("**⚠️ Coverage gaps** — the diff implicates flows that no existing spec covers.");
       lines.push("");
       lines.push("### Uncovered flows");
       for (const x of r.uncoveredRoutes) lines.push(`- ${x}`);
       for (const x of r.uncoveredEndpoints) lines.push(`- ${x}`);
     } else {
-      lines.push("Nothing to verify against prod.");
+      lines.push("**✅ Clean diff** — nothing in the map was touched, no specs needed.");
+      lines.push("");
+      lines.push(diffSampleBlock(r.diffFiles));
     }
     return lines.join("\n");
   }

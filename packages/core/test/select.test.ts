@@ -152,6 +152,12 @@ describe("runSelect — uncovered case", () => {
     expect(r.selectedTestCount).toBe(0);
     expect(r.uncoveredRoutes).toContain("/checkout");
   });
+
+  it("surfaces the diff file list so downstream formatters can show context", () => {
+    stub(makeMap(), ["app/api/bugs/route.ts", "src/components/CreateBugButton.tsx"]);
+    const r = runSelect({ rootDir: "/repo", base: "a", head: "b" });
+    expect(r.diffFiles).toEqual(["app/api/bugs/route.ts", "src/components/CreateBugButton.tsx"]);
+  });
 });
 
 describe("formatSelectionMarkdown", () => {
@@ -178,7 +184,18 @@ describe("formatSelectionMarkdown", () => {
     stub(map, ["app/checkout/page.tsx"]);
     const r = runSelect({ rootDir: "/repo", base: "a", head: "b" });
     const md = formatSelectionMarkdown(r, { base: "a", head: "b" });
-    expect(md).toContain("No covering specs");
+    expect(md).toContain("⚠️ Coverage gaps");
     expect(md).toContain("/checkout");
+  });
+
+  it("renders a friendly clean-diff message when no routes/endpoints are touched", () => {
+    const map = makeMap({ specs: [] });
+    stub(map, [".github/workflows/claudia-verify.yml"]);
+    const r = runSelect({ rootDir: "/repo", base: "a", head: "b" });
+    const md = formatSelectionMarkdown(r, { base: "a", head: "b" });
+    expect(md).toContain("✅ Clean diff");
+    expect(md).toContain("1 file changed");
+    expect(md).toContain(".github/workflows/claudia-verify.yml");
+    expect(md).not.toContain("No covering specs"); // old phrasing
   });
 });

@@ -23,6 +23,7 @@ const baseSelection = (
   uncoveredEndpoints: [],
   playwrightGrep: "creates a bug|lists bugs",
   cypressSpecs: "",
+  diffFiles: ["src/app/api/bugs/route.ts", "src/components/CreateBugButton.tsx"],
   ...overrides,
 });
 
@@ -234,14 +235,74 @@ describe("formatRunMarkdown", () => {
     expect(md).toContain("500 from /api/bugs");
   });
 
-  it("reports nothing-to-run when selection has no specs and no gaps", () => {
+  it("reports clean-run (not 'nothing to verify') when diff touched nothing in the map", () => {
     const md = formatRunMarkdown({
-      selection: baseSelection({ selected: [], selectedTestCount: 0, playwrightGrep: null }),
+      selection: baseSelection({
+        selected: [],
+        selectedTestCount: 0,
+        playwrightGrep: null,
+        diffFiles: [".github/workflows/claudia-verify.yml"],
+      }),
       report: null,
       target: "https://prod",
       nothingToRun: true,
     });
-    expect(md).toContain("Nothing to verify");
+    expect(md).toContain("✅ Clean run");
+    expect(md).not.toContain("Nothing to verify"); // old phrasing should be gone
+    expect(md).toContain("1 file changed");
+    expect(md).toContain(".github/workflows/claudia-verify.yml");
+  });
+
+  it("includes a per-file sample when the no-op diff has 2-5 files", () => {
+    const md = formatRunMarkdown({
+      selection: baseSelection({
+        selected: [],
+        selectedTestCount: 0,
+        playwrightGrep: null,
+        diffFiles: ["a.ts", "b.ts", "c.ts"],
+      }),
+      report: null,
+      target: "https://prod",
+      nothingToRun: true,
+    });
+    expect(md).toContain("3 files changed");
+    expect(md).toContain("- `a.ts`");
+    expect(md).toContain("- `c.ts`");
+  });
+
+  it("truncates the diff sample with '…and N more' for large diffs", () => {
+    const files = ["a", "b", "c", "d", "e", "f", "g"].map((s) => `${s}.ts`);
+    const md = formatRunMarkdown({
+      selection: baseSelection({
+        selected: [],
+        selectedTestCount: 0,
+        playwrightGrep: null,
+        diffFiles: files,
+      }),
+      report: null,
+      target: "https://prod",
+      nothingToRun: true,
+    });
+    expect(md).toContain("7 files changed");
+    expect(md).toContain("…and 2 more");
+  });
+
+  it("reports coverage gaps when the diff implicates uncovered flows", () => {
+    const md = formatRunMarkdown({
+      selection: baseSelection({
+        selected: [],
+        selectedTestCount: 0,
+        playwrightGrep: null,
+        uncoveredRoutes: ["/checkout/confirm"],
+        uncoveredEndpoints: ["POST /api/orders"],
+      }),
+      report: null,
+      target: "https://prod",
+      nothingToRun: true,
+    });
+    expect(md).toContain("⚠️ Coverage gaps");
+    expect(md).toContain("/checkout/confirm");
+    expect(md).toContain("POST /api/orders");
   });
 
   it("reports cypress-only when only cypress specs were selected", () => {
@@ -258,6 +319,17 @@ describe("formatRunMarkdown", () => {
       target: "https://prod",
       nothingToRun: true,
     });
-    expect(md).toContain("Cypress-only");
+    expect(md).toContain("ℹ️ Cypress-only");
+    expect(md).toContain('npx cypress run --spec "cypress/e2e/x.cy.ts"');
+  });
+
+  it("always renders the diff summary line, even for successful runs", () => {
+    const md = formatRunMarkdown({
+      selection: baseSelection(),
+      report: { passed: 2, failed: 0, flaky: 0, skipped: 0, durationMs: 1234, totalTests: 2, failedTests: [] },
+      target: "https://prod",
+      nothingToRun: false,
+    });
+    expect(md).toContain("Diff: 2 files changed");
   });
 });

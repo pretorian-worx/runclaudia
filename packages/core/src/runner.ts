@@ -1,4 +1,4 @@
-import type { SelectionResult } from "./select.js";
+import { describeDiff, diffSampleBlock, type SelectionResult } from "./select.js";
 
 export interface RunCommandOptions {
   selection: SelectionResult;
@@ -171,15 +171,38 @@ export function formatRunMarkdown(args: {
   lines.push("## claudia — post-deploy verification");
   lines.push("");
   lines.push(`Target: \`${args.target}\``);
+  lines.push(`Diff: ${describeDiff(args.selection.diffFiles)}.`);
 
   if (args.nothingToRun) {
     lines.push("");
-    if (args.selection.selectedTestCount === 0 && args.selection.uncoveredRoutes.length === 0 && args.selection.uncoveredEndpoints.length === 0) {
-      lines.push("**Nothing to verify.** No covering specs and no coverage gaps for this diff.");
-    } else if (args.selection.selectedTestCount === 0) {
-      lines.push("**No covering Playwright specs.** Coverage gaps detected — see `claudia select` for details.");
+    const s = args.selection;
+    const noSelection = s.selectedTestCount === 0;
+    const noGaps = s.uncoveredRoutes.length === 0 && s.uncoveredEndpoints.length === 0;
+
+    if (noSelection && noGaps) {
+      // Diff didn't touch anything claudia tracks. This is the right outcome,
+      // not a failure — frame it that way.
+      lines.push("**✅ Clean run** — nothing in the indexed map was touched, no specs needed.");
+      lines.push("");
+      lines.push(diffSampleBlock(s.diffFiles));
+    } else if (noSelection) {
+      // The diff implicates real flows, but no existing spec covers them.
+      // That's a genuine coverage gap and the most useful "nothing ran" message
+      // we can produce — it tells the team something concrete to do.
+      lines.push("**⚠️ Coverage gaps** — the diff implicates flows that no existing spec covers.");
+      lines.push("");
+      lines.push("### Uncovered flows");
+      for (const r of s.uncoveredRoutes) lines.push(`- ${r}`);
+      for (const e of s.uncoveredEndpoints) lines.push(`- ${e}`);
     } else {
-      lines.push("**Cypress-only selection.** Run `claudia select --files-only | xargs cypress run --spec` separately.");
+      // Specs were picked but none are Playwright (Cypress-only). The runner
+      // doesn't drive Cypress yet; surface a runnable command.
+      lines.push("**ℹ️ Cypress-only selection** — the runner doesn't drive Cypress yet.");
+      lines.push("");
+      lines.push("Run separately:");
+      lines.push("```bash");
+      lines.push(`npx cypress run --spec "${args.selection.cypressSpecs}"`);
+      lines.push("```");
     }
     return lines.join("\n");
   }
