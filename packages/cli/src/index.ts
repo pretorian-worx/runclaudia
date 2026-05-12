@@ -8,11 +8,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildPlaywrightCommand,
+  formatGenerationMarkdown,
   formatRunMarkdown,
   formatSelectionMarkdown,
   loadOrBuildMap,
   parsePlaywrightReport,
   PlannerError,
+  runGenerate,
   runPlan,
   runSelect,
 } from "@pretorian-worx/runclaudia-core";
@@ -299,6 +301,50 @@ function resolveSha(cwd: string, ref: string): string {
   }
 }
 
+const generateCmd = defineCommand({
+  meta: {
+    name: "generate",
+    description:
+      "Draft Playwright specs for routes in the diff that have no existing coverage. Writes generated specs to .claudia/generated/ for human review — does not execute or auto-commit.",
+  },
+  args: {
+    base: { type: "string", required: true, description: "Base ref (the last-deployed SHA)" },
+    head: { type: "string", default: "HEAD", description: "Head ref (the just-deployed SHA)" },
+    cwd: { type: "string", description: "Project root directory" },
+    "out-dir": { type: "string", description: "Output directory for generated specs (default: <cwd>/.claudia/generated/)" },
+    "max-flows": { type: "string", description: "Cap on how many uncovered routes to generate for in one run (default: 5)" },
+    model: { type: "string", description: "Override the generator model (default: claude-sonnet-4-6)" },
+    json: { type: "boolean", description: "Emit JSON summary instead of markdown" },
+  },
+  async run({ args }) {
+    const rootDir = resolve(args.cwd ?? process.cwd());
+    let result;
+    try {
+      result = await runGenerate({
+        rootDir,
+        base: args.base,
+        head: args.head,
+        model: args.model,
+        outDir: args["out-dir"] ? resolve(args["out-dir"]) : undefined,
+        maxFlows: args["max-flows"] ? parseInt(args["max-flows"], 10) : undefined,
+      });
+    } catch (err) {
+      if (err instanceof PlannerError) {
+        process.stderr.write(`claudia: ${err.message}\n`);
+        process.stderr.write(JSON.stringify(err.details, null, 2) + "\n");
+        process.exit(2);
+      }
+      throw err;
+    }
+
+    if (args.json) {
+      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    } else {
+      process.stdout.write(formatGenerationMarkdown(result, { base: args.base, head: args.head }) + "\n");
+    }
+  },
+});
+
 const ratingsCmd = defineCommand({
   meta: { name: "ratings", description: "Aggregate 👍/👎 reactions on claudia comments across a repo's PRs" },
   args: {
@@ -328,7 +374,7 @@ const ratingsCmd = defineCommand({
 
 const main = defineCommand({
   meta: { name: "claudia", description: "Diff-aware post-deploy test agent" },
-  subCommands: { plan: planCmd, map: mapCmd, select: selectCmd, run: runCmd, ratings: ratingsCmd },
+  subCommands: { plan: planCmd, map: mapCmd, select: selectCmd, run: runCmd, generate: generateCmd, ratings: ratingsCmd },
 });
 
 runMain(main);

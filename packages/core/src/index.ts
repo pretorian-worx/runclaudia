@@ -12,6 +12,12 @@ export type { GatingDecision, GatingMode, GatingOptions, RiskLevel } from "./gat
 export { runSelect, formatSelectionMarkdown } from "./select.js";
 export type { SelectOptions, SelectionResult, SelectedSpec } from "./select.js";
 export { buildPlaywrightCommand, parsePlaywrightReport, formatRunMarkdown } from "./runner.js";
+export { runGenerate, formatGenerationMarkdown } from "./generate.js";
+export type {
+  GenerateOptions,
+  GeneratedSpec,
+  GenerationResult,
+} from "./generate.js";
 export type {
   RunCommandOptions,
   PlaywrightCommand,

@@ -205,6 +205,27 @@ Target: `https://app.example.com`
 
 A future release will add pluggable auth recipes (Clerk/Auth0/NextAuth/Supabase/Cognito starters); until then teams with auth already wired for pre-deploy E2E can adopt `claudia run` today by pointing it at production.
 
+### Generating specs for uncovered routes — `claudia generate` (Path B, phase 1)
+
+For teams that don't enforce test-on-add upfront, `claudia run` against a diff with new routes produces an empty "no covering specs" outcome. `claudia generate` is the first half of the fix: for each uncovered route the diff implicates, draft a Playwright spec that follows the team's existing style and write it to `.claudia/generated/`:
+
+```bash
+claudia generate \
+  --base $LAST_DEPLOY_SHA \
+  --head $JUST_DEPLOYED_SHA \
+  [--max-flows 5] [--out-dir .claudia/generated]
+```
+
+Behaviour:
+- Reads the team's existing specs to learn navigation/assertion conventions (helper imports, `appNav` vs `page.goto`, etc.) and matches that style.
+- Generates one spec per uncovered route, capped by `--max-flows` (default 5).
+- Outputs to `.claudia/generated/<flow>.spec.ts` for human review — **does not execute**, **does not auto-commit**.
+- Sanitizes model-supplied filenames (no path traversal, only safe chars, `.spec.ts` extension enforced).
+
+The intent is a draft a human reviews + moves into the real `e2e/` directory after reading. Phase 2 will add execution (run the generated spec against prod before suggesting it). Phase 3 will open a PR with the spec attached.
+
+Cost: one Anthropic call per uncovered route, only when a coverage gap actually exists. ~$0.05–0.20 per gap on Sonnet.
+
 ### Tuning what gets selected
 
 Claudia recognizes two navigation patterns when indexing your specs:

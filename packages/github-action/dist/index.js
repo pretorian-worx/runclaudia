@@ -47193,7 +47193,7 @@ var _a;
 /**
  * API Client for interfacing with the Anthropic API.
  */
-class Anthropic extends APIClient {
+class sdk_Anthropic extends APIClient {
     /**
      * API Client for interfacing with the Anthropic API.
      *
@@ -47280,35 +47280,35 @@ class Anthropic extends APIClient {
         return { Authorization: `Bearer ${this.authToken}` };
     }
 }
-_a = Anthropic;
-Anthropic.Anthropic = _a;
-Anthropic.HUMAN_PROMPT = '\n\nHuman:';
-Anthropic.AI_PROMPT = '\n\nAssistant:';
-Anthropic.DEFAULT_TIMEOUT = 600000; // 10 minutes
-Anthropic.AnthropicError = error_AnthropicError;
-Anthropic.APIError = APIError;
-Anthropic.APIConnectionError = APIConnectionError;
-Anthropic.APIConnectionTimeoutError = APIConnectionTimeoutError;
-Anthropic.APIUserAbortError = APIUserAbortError;
-Anthropic.NotFoundError = NotFoundError;
-Anthropic.ConflictError = ConflictError;
-Anthropic.RateLimitError = RateLimitError;
-Anthropic.BadRequestError = BadRequestError;
-Anthropic.AuthenticationError = AuthenticationError;
-Anthropic.InternalServerError = InternalServerError;
-Anthropic.PermissionDeniedError = PermissionDeniedError;
-Anthropic.UnprocessableEntityError = UnprocessableEntityError;
-Anthropic.toFile = toFile;
-Anthropic.fileFromPath = fileFromPath;
-Anthropic.Completions = Completions;
-Anthropic.Messages = Messages;
-Anthropic.Models = Models;
-Anthropic.ModelInfosPage = ModelInfosPage;
-Anthropic.Beta = Beta;
-const { HUMAN_PROMPT, AI_PROMPT } = Anthropic;
+_a = sdk_Anthropic;
+sdk_Anthropic.Anthropic = _a;
+sdk_Anthropic.HUMAN_PROMPT = '\n\nHuman:';
+sdk_Anthropic.AI_PROMPT = '\n\nAssistant:';
+sdk_Anthropic.DEFAULT_TIMEOUT = 600000; // 10 minutes
+sdk_Anthropic.AnthropicError = error_AnthropicError;
+sdk_Anthropic.APIError = APIError;
+sdk_Anthropic.APIConnectionError = APIConnectionError;
+sdk_Anthropic.APIConnectionTimeoutError = APIConnectionTimeoutError;
+sdk_Anthropic.APIUserAbortError = APIUserAbortError;
+sdk_Anthropic.NotFoundError = NotFoundError;
+sdk_Anthropic.ConflictError = ConflictError;
+sdk_Anthropic.RateLimitError = RateLimitError;
+sdk_Anthropic.BadRequestError = BadRequestError;
+sdk_Anthropic.AuthenticationError = AuthenticationError;
+sdk_Anthropic.InternalServerError = InternalServerError;
+sdk_Anthropic.PermissionDeniedError = PermissionDeniedError;
+sdk_Anthropic.UnprocessableEntityError = UnprocessableEntityError;
+sdk_Anthropic.toFile = toFile;
+sdk_Anthropic.fileFromPath = fileFromPath;
+sdk_Anthropic.Completions = Completions;
+sdk_Anthropic.Messages = Messages;
+sdk_Anthropic.Models = Models;
+sdk_Anthropic.ModelInfosPage = ModelInfosPage;
+sdk_Anthropic.Beta = Beta;
+const { HUMAN_PROMPT, AI_PROMPT } = sdk_Anthropic;
 
 
-/* harmony default export */ const sdk = (Anthropic);
+/* harmony default export */ const sdk = (sdk_Anthropic);
 //# sourceMappingURL=index.mjs.map
 ;// CONCATENATED MODULE: ../core/dist/prompt.js
 const SYSTEM_PROMPT = `You are claudia, a diff-aware test planner.
@@ -47599,7 +47599,7 @@ function unwrapCandidates(input) {
     }
     return out;
 }
-class PlannerError extends Error {
+class llm_PlannerError extends Error {
     details;
     constructor(message, details) {
         super(message);
@@ -47675,7 +47675,7 @@ async function callPlanner(opts) {
             .map((b) => b.text)
             .join("\n")
             .slice(0, 2000);
-        throw new PlannerError("Model did not call emit_plan tool", {
+        throw new llm_PlannerError("Model did not call emit_plan tool", {
             stopReason: response.stop_reason,
             contentTypes: response.content.map((b) => b.type),
             textPreview,
@@ -47694,7 +47694,7 @@ async function callPlanner(opts) {
         lastIssues = parsed.error.issues;
     }
     if (!plan) {
-        throw new PlannerError("emit_plan tool input did not match schema", {
+        throw new llm_PlannerError("emit_plan tool input did not match schema", {
             stopReason: response.stop_reason,
             rawInput: last.input,
             zodIssues: lastIssues,
@@ -50613,7 +50613,290 @@ function runner_truncate(s, n) {
     return s.length > n ? s.slice(0, n) + `\n... [${s.length - n} chars truncated]` : s;
 }
 //# sourceMappingURL=runner.js.map
+;// CONCATENATED MODULE: ../core/dist/generate.js
+
+
+
+
+
+
+
+
+const SPEC_TOOL_SCHEMA = {
+    name: "emit_spec",
+    description: "Emit a single complete Playwright spec file. Call this exactly once with the full spec source.",
+    input_schema: {
+        type: "object",
+        required: ["file_name", "contents", "reasoning"],
+        properties: {
+            file_name: {
+                type: "string",
+                description: "Filename for the new spec, kebab-case, ending in `.spec.ts`. Should describe the flow (e.g. 'initiative-docs-detail.spec.ts').",
+            },
+            contents: {
+                type: "string",
+                description: "Complete `.spec.ts` source. Use the same imports, helpers, and assertion style as the sample spec provided in context. Skip auth setup — it's handled globally.",
+            },
+            reasoning: {
+                type: "string",
+                description: "One-paragraph explanation of what this spec verifies and why it's the right shape for the target flow.",
+            },
+        },
+    },
+};
+const SPEC_INPUT_SCHEMA = objectType({
+    file_name: stringType(),
+    contents: stringType(),
+    reasoning: stringType(),
+});
+const generate_SYSTEM_PROMPT = (/* unused pure expression or super */ null && (`You are claudia's test generator. Your job: write a single Playwright spec file that verifies a specific user-facing flow works in production.
+
+Hard rules:
+- Match the style of the EXISTING SPEC sample in the prompt — same import paths, same navigation helpers, same assertion conventions.
+- Skip auth setup. The team's global-setup file handles login; specs are run with an authenticated context already.
+- Focus on the happy path: navigate to the route, verify key elements render, exercise one core interaction, assert no console errors.
+- Do NOT invent helpers that don't exist in the sample. If the sample uses \`appNav(page, path)\`, you use \`appNav\`. If it uses \`page.goto\` directly, you use \`page.goto\`.
+- Keep the spec short — 1 or 2 \`test()\` blocks. Verification, not exhaustive testing.
+- Generated specs are reviewed by a human before merging. Optimize for "obvious, easy to review, easy to delete if wrong" rather than "comprehensive."
+
+Output via the emit_spec tool, exactly once.`));
+async function runGenerate(opts) {
+    const rootDir = resolve(opts.rootDir);
+    const outDir = opts.outDir ?? join(rootDir, ".claudia", "generated");
+    const maxFlows = opts.maxFlows ?? 5;
+    const diff = readDiff({ base: opts.base, head: opts.head, cwd: rootDir });
+    const map = loadOrBuildMap({ rootDir });
+    const filtered = filterMapForDiff(map, diff);
+    const flowsToGenerate = filtered.uncoveredRoutes.slice(0, maxFlows);
+    const skippedFlows = filtered.uncoveredRoutes.slice(maxFlows);
+    if (flowsToGenerate.length === 0) {
+        return {
+            generated: [],
+            skippedFlows: [],
+            totalUsage: { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },
+            outDir,
+        };
+    }
+    const apiKey = opts.apiKey ?? process.env.ANTHROPIC_API_KEY;
+    if (!apiKey)
+        throw new Error("ANTHROPIC_API_KEY is not set");
+    const client = new Anthropic({ apiKey });
+    const model = opts.model ?? "claude-sonnet-4-6";
+    const sampleSpec = pickSampleSpec(rootDir, map);
+    const changedFiles = renderChangedFiles(diff, rootDir);
+    mkdirSync(outDir, { recursive: true });
+    const generated = [];
+    const totalUsage = { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
+    for (const flow of flowsToGenerate) {
+        const userMessage = generate_buildUserMessage({ flow, changedFiles, sampleSpec });
+        const response = await client.messages.create({
+            model,
+            max_tokens: 4096,
+            system: [{ type: "text", text: generate_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+            tools: [SPEC_TOOL_SCHEMA],
+            tool_choice: { type: "tool", name: "emit_spec" },
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        // Sample spec is cacheable across multiple flow generations in the same run.
+                        { type: "text", text: userMessage.cachedPrefix, cache_control: { type: "ephemeral" } },
+                        { type: "text", text: userMessage.volatile },
+                    ],
+                },
+            ],
+        });
+        const toolUse = response.content.find((b) => b.type === "tool_use" && b.name === "emit_spec");
+        if (!toolUse) {
+            throw new PlannerError("Model did not call emit_spec tool", {
+                stopReason: response.stop_reason,
+                contentTypes: response.content.map((b) => b.type),
+                flow,
+            });
+        }
+        const parsed = SPEC_INPUT_SCHEMA.safeParse(toolUse.input);
+        if (!parsed.success) {
+            throw new PlannerError("emit_spec input did not match schema", {
+                stopReason: response.stop_reason,
+                rawInput: toolUse.input,
+                zodIssues: parsed.error.issues,
+                flow,
+            });
+        }
+        const safeFileName = sanitizeFileName(parsed.data.file_name);
+        const filePath = join(outDir, safeFileName);
+        writeFileSync(filePath, parsed.data.contents, "utf8");
+        const usage = response.usage;
+        const thisUsage = {
+            inputTokens: usage.input_tokens,
+            outputTokens: usage.output_tokens,
+            cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+            cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+        };
+        totalUsage.inputTokens += thisUsage.inputTokens;
+        totalUsage.outputTokens += thisUsage.outputTokens;
+        totalUsage.cacheCreationTokens += thisUsage.cacheCreationTokens;
+        totalUsage.cacheReadTokens += thisUsage.cacheReadTokens;
+        generated.push({
+            flow,
+            filePath,
+            fileRel: relPath(rootDir, filePath),
+            contents: parsed.data.contents,
+            reasoning: parsed.data.reasoning,
+            usage: thisUsage,
+        });
+    }
+    return { generated, skippedFlows, totalUsage, outDir };
+}
+function generate_buildUserMessage(args) {
+    const parts = [];
+    parts.push("# Existing spec style in this repo");
+    if (args.sampleSpec) {
+        parts.push(`Sample: \`${args.sampleSpec.path}\` — use the same imports, helpers, and assertion patterns.`);
+        parts.push("");
+        parts.push("```ts");
+        parts.push(args.sampleSpec.contents);
+        parts.push("```");
+    }
+    else {
+        parts.push("(no existing specs found — write a minimal Playwright spec using `page.goto` and `expect`)");
+    }
+    parts.push("");
+    parts.push("# Changed files in this diff");
+    parts.push(args.changedFiles);
+    const cachedPrefix = parts.join("\n");
+    const volatile = [
+        "",
+        "# Flow to generate a spec for",
+        `Route: \`${args.flow}\``,
+        "",
+        "Emit a single spec file via the emit_spec tool that verifies this route renders and behaves correctly in production.",
+    ].join("\n");
+    return { cachedPrefix, volatile };
+}
+function pickSampleSpec(rootDir, map) {
+    // Prefer a spec from the indexed set — that's our ground truth for what
+    // "the team's style" looks like. Sort by file path so the same repo+map
+    // picks the same sample each time, keeping the cached prefix stable.
+    const candidates = (map.specs ?? [])
+        .map((s) => s.file)
+        .filter((f, i, arr) => arr.indexOf(f) === i)
+        .sort();
+    for (const rel of candidates) {
+        try {
+            const abs = join(rootDir, rel);
+            const src = readFileSync(abs, "utf8");
+            if (src.includes("test(") || src.includes("it(")) {
+                return { path: rel, contents: generate_truncate(src, 6000) };
+            }
+        }
+        catch {
+            continue;
+        }
+    }
+    return null;
+}
+function renderChangedFiles(diff, rootDir) {
+    const lines = [];
+    for (const f of diff.files) {
+        lines.push(`## ${f.path}`);
+        if (f.binary) {
+            lines.push("(binary)");
+            continue;
+        }
+        // Inline the current source so the generator can see what the change shipped.
+        try {
+            const abs = join(rootDir, f.path);
+            if (existsSafe(abs)) {
+                lines.push("```");
+                lines.push(generate_truncate(readFileSync(abs, "utf8"), 4000));
+                lines.push("```");
+            }
+            else {
+                for (const h of f.hunks) {
+                    lines.push("```diff");
+                    lines.push(generate_truncate(h, 2000));
+                    lines.push("```");
+                }
+            }
+        }
+        catch {
+            // best-effort
+        }
+    }
+    return lines.join("\n");
+}
+function existsSafe(p) {
+    try {
+        statSync(p);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function generate_truncate(s, n) {
+    return s.length > n ? s.slice(0, n) + `\n... [${s.length - n} chars truncated]` : s;
+}
+function sanitizeFileName(name) {
+    // Strip any path components — generated files always go in outDir.
+    const base = name.split("/").pop().split("\\").pop();
+    const cleaned = base.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-");
+    if (!cleaned.endsWith(".spec.ts") && !cleaned.endsWith(".spec.js")) {
+        return `${cleaned}.spec.ts`;
+    }
+    return cleaned;
+}
+function relPath(rootDir, abs) {
+    // Avoid pulling in node:path's relative for cross-platform reasons here.
+    if (abs.startsWith(rootDir + "/") || abs.startsWith(rootDir + "\\")) {
+        return abs.slice(rootDir.length + 1).replace(/\\/g, "/");
+    }
+    return abs;
+}
+function formatGenerationMarkdown(r, args) {
+    const lines = [];
+    lines.push("## claudia — generated specs");
+    lines.push("");
+    lines.push(`Diff: \`${args.base}..${args.head}\``);
+    lines.push("");
+    if (r.generated.length === 0 && r.skippedFlows.length === 0) {
+        lines.push("**Nothing to generate.** No uncovered routes implicated by this diff.");
+        return lines.join("\n");
+    }
+    if (r.generated.length === 0 && r.skippedFlows.length > 0) {
+        lines.push(`**No specs generated yet** — ${r.skippedFlows.length} uncovered route(s) exist but the run cap was 0.`);
+        return lines.join("\n");
+    }
+    lines.push(`Generated **${r.generated.length}** spec${r.generated.length === 1 ? "" : "s"} in \`${r.outDir}\`.`);
+    lines.push("");
+    for (const g of r.generated) {
+        lines.push(`### \`${g.fileRel}\` — covers \`${g.flow}\``);
+        lines.push("");
+        lines.push(g.reasoning);
+        lines.push("");
+        lines.push("```ts");
+        lines.push(generate_truncate(g.contents, 1200));
+        lines.push("```");
+        lines.push("");
+    }
+    if (r.skippedFlows.length > 0) {
+        lines.push(`### Skipped (cap reached)`);
+        for (const f of r.skippedFlows)
+            lines.push(`- \`${f}\``);
+        lines.push("");
+    }
+    const u = r.totalUsage;
+    lines.push(`<sub>tokens: in ${u.inputTokens} (cache write ${u.cacheCreationTokens} / cache read ${u.cacheReadTokens}) · out ${u.outputTokens}</sub>`);
+    return lines.join("\n");
+}
+// Hint to the index module that readdirSync is intentionally unused in this file's
+// surface; it's only here for future use when we walk for additional sample specs.
+void external_node_fs_namespaceObject.readdirSync;
+void external_node_path_namespaceObject.dirname;
+//# sourceMappingURL=generate.js.map
 ;// CONCATENATED MODULE: ../core/dist/index.js
+
 
 
 
