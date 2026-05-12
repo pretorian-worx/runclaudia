@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/pretorian-worx/runclaudia/compare/v0.13.0...v0.13.1) (2026-05-12)
+
+
+### Bug Fixes
+
+* warn instead of silently swallowing config load failures ([#13](https://github.com/pretorian-worx/runclaudia/issues/13)) ([1afccf4](https://github.com/pretorian-worx/runclaudia/commit/1afccf4da1da189fea3d5798f0a539ad8ae35713))
+
 ## [0.13.0](https://github.com/pretorian-worx/runclaudia/compare/v0.12.0...v0.13.0) (2026-05-12)
 
 
