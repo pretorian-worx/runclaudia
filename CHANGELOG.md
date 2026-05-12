@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/pretorian-worx/runclaudia/compare/v0.13.2...v0.14.0) (2026-05-12)
+
+
+### Features
+
+* claudia generate — draft Playwright specs for uncovered routes (Path B phase 1) ([15d90b6](https://github.com/pretorian-worx/runclaudia/commit/15d90b6730696cf3eca53c92e197ebecda871fc9))
+
 ## [0.13.2](https://github.com/pretorian-worx/runclaudia/compare/v0.13.1...v0.13.2) (2026-05-12)
 
 
