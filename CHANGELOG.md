@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/pretorian-worx/runclaudia/compare/v0.12.0...v0.13.0) (2026-05-12)
+
+
+### Features
+
+* detect nav-helper patterns + add excludeSpecs config ([6865463](https://github.com/pretorian-worx/runclaudia/commit/68654630632cbe2d3ce5545cf5065e20864f0fb0))
+* friendlier no-op verdict + diff context in claudia run output ([a66ed1d](https://github.com/pretorian-worx/runclaudia/commit/a66ed1d0ba003f1c015911ff69d493eff5361417))
+
 ## [0.12.0](https://github.com/pretorian-worx/runclaudia/compare/v0.11.0...v0.12.0) (2026-05-11)
 
 
