@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/pretorian-worx/runclaudia/compare/v0.14.0...v0.15.0) (2026-05-12)
+
+
+### Features
+
+* claudia generate --run executes drafts against prod (Path B phase 2) ([96eaa7c](https://github.com/pretorian-worx/runclaudia/commit/96eaa7ce138bed61a9c6ec3a94c73248605575d2))
+
 ## [0.14.0](https://github.com/pretorian-worx/runclaudia/compare/v0.13.2...v0.14.0) (2026-05-12)
 
 

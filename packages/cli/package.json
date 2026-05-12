@@ -1,6 +1,6 @@
 {
   "name": "@pretorian-worx/runclaudia-cli",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "type": "module",
   "description": "Diff-aware post-deploy test agent CLI — picks a relevant Playwright subset for a diff and runs it against the deployed prod artifact, with reporting to GitHub Actions, the merged PR, and Slack.",
   "keywords": [
