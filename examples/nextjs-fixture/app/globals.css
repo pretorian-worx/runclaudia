@@ -1,0 +1,5 @@
+/* fixture global stylesheet — exists so the adapter test can verify CSS
+   imports are NOT followed into the reachability graph. */
+body {
+  font-family: sans-serif;
+}

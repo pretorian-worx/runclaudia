@@ -59,6 +59,21 @@ describe("buildNextMap (Next.js App Router)", () => {
     expect(upload?.bodyShape).toBe("formData");
   });
 
+  it("does NOT follow CSS imports into the reachability graph", () => {
+    // app/layout.tsx imports `./globals.css` (canonical Next.js pattern).
+    // If we followed style imports, globals.css would be reachable from every
+    // route (since layout is reachable from every route), and a CSS diff
+    // would falsely implicate every spec covering any route.
+    const map = buildNextMap({ rootDir: FIXTURE });
+    for (const route of map.routes) {
+      const hasCss = route.files.some((f) => f.endsWith(".css"));
+      expect(hasCss, `route ${route.route} unexpectedly reaches globals.css`).toBe(false);
+    }
+    // And the file shouldn't appear in the reverse index either.
+    const cssKey = Object.keys(map.fileToRoutes).find((k) => k.endsWith("globals.css"));
+    expect(cssKey).toBeUndefined();
+  });
+
   it("attributes endpoints back through fileToRoutes with method-prefixed keys", () => {
     const map = buildNextMap({ rootDir: FIXTURE });
     const bugsRoute = Object.keys(map.fileToRoutes).find((k) => k.endsWith("api/bugs/route.ts"));

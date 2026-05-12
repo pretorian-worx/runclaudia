@@ -337,10 +337,27 @@ function collectReachable(
   }
 
   for (const spec of specs) {
+    // Style/asset imports don't participate in runtime user flows. Following
+    // them through the reachability graph treats a CSS change as touching
+    // every route that uses the layout — which over-selects E2E specs by
+    // orders of magnitude when something like globals.css is in the diff.
+    if (NON_RUNTIME_IMPORT_RE.test(spec)) continue;
     const resolved = resolveSpec(spec, file, rootDir, tsPaths);
     if (resolved) collectReachable(resolved, rootDir, tsPaths, into, depth - 1);
   }
 }
+
+// Extensions we intentionally do NOT follow in the import-reachability graph.
+// Styles, images, fonts, and audio/video assets are leaf-shaped from a user-
+// flow standpoint: a change can't break a click or a fetch in a way E2E tests
+// can verify. Excluding them prevents `globals.css` (typically imported by the
+// root layout) from making every route in the app appear "implicated" by a
+// pure-style diff.
+//
+// Strips the literal extension only — query-strings / fragments (e.g.
+// `"./logo.svg?url"`) are handled by stripping at the first `?` or `#`.
+const NON_RUNTIME_IMPORT_RE =
+  /\.(?:css|scss|sass|less|styl|pcss|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|eot|mp4|webm|mov|m4v|mp3|wav|ogg|pdf)(?:[?#].*)?$/i;
 
 const EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 
