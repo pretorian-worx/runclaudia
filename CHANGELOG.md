@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/pretorian-worx/runclaudia/compare/v0.16.0...v0.17.0) (2026-05-12)
+
+
+### Features
+
+* structured Slack Block Kit payload for claudia run ([6786958](https://github.com/pretorian-worx/runclaudia/commit/67869581c7528b3aa137ebbc8ad6c1322d58cde8))
+
 ## [0.16.0](https://github.com/pretorian-worx/runclaudia/compare/v0.15.0...v0.16.0) (2026-05-12)
 
 
