@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.2](https://github.com/pretorian-worx/runclaudia/compare/v0.13.1...v0.13.2) (2026-05-12)
+
+
+### Bug Fixes
+
+* filter CSS/asset imports from reachability graph ([29d167c](https://github.com/pretorian-worx/runclaudia/commit/29d167c84019a41c7f6b8bdcef7ee7b17ba1a6c0))
+
 ## [0.13.1](https://github.com/pretorian-worx/runclaudia/compare/v0.13.0...v0.13.1) (2026-05-12)
 
 
