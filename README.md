@@ -270,6 +270,8 @@ Add `--pr-dry-run` to plan the file moves and branch name without pushing or cal
 
 Cost: one Anthropic call per uncovered route, only when a coverage gap actually exists. ~$0.05–0.20 per gap on Sonnet.
 
+**Reporting:** when `--run` is set, `claudia generate` dispatches the same four reporters as `claudia run` — step summary, sticky PR back-comment on the originating PR for the SHA, `claudia / deploy-verified` GitHub check, and Slack Block Kit if a webhook is configured. The Slack payload shows the generated draft counts (`N — N generated`) and any failure snippets; the check conclusion is `success` only when every executed draft passed. The same `--slack-webhook` / `--no-step-summary` / `--no-pr-comment` / `--no-check` flags work here.
+
 ### Tuning what gets selected
 
 Claudia recognizes two navigation patterns when indexing your specs:

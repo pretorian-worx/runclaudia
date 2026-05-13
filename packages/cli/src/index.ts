@@ -23,6 +23,7 @@ import { loadConfig } from "./config.js";
 import { aggregateRatings, formatRatings } from "./ratings.js";
 import { dispatchReporters } from "./reporters.js";
 import { openDraftPr } from "./pr.js";
+import { buildGenerateReportShape } from "./generate-report.js";
 
 const planCmd = defineCommand({
   meta: { name: "plan", description: "Produce a diff-aware test plan" },
@@ -354,6 +355,22 @@ const generateCmd = defineCommand({
       description: "Prepare the PR (move files, choose branch) but don't push or call gh.",
     },
     json: { type: "boolean", description: "Emit JSON summary instead of markdown" },
+    "slack-webhook": {
+      type: "string",
+      description: "Slack incoming-webhook URL to POST the result to (only used with --run). Or set CLAUDIA_SLACK_WEBHOOK.",
+    },
+    "no-step-summary": {
+      type: "boolean",
+      description: "Disable auto-writing to $GITHUB_STEP_SUMMARY when running in GitHub Actions",
+    },
+    "no-pr-comment": {
+      type: "boolean",
+      description: "Disable posting a sticky comment back to the originating PR for this SHA (only fires with --run)",
+    },
+    "no-check": {
+      type: "boolean",
+      description: "Disable posting the 'claudia / deploy-verified' GitHub check against the deployed SHA (only fires with --run)",
+    },
   },
   async run({ args }) {
     if (args.run && !args.target) {
@@ -392,13 +409,15 @@ const generateCmd = defineCommand({
       }
     }
 
+    const generationMarkdown = formatGenerationMarkdown(result, { base: args.base, head: args.head });
     if (args.json) {
       process.stdout.write(JSON.stringify(result, null, 2) + "\n");
     } else {
-      process.stdout.write(formatGenerationMarkdown(result, { base: args.base, head: args.head }) + "\n");
+      process.stdout.write(generationMarkdown + "\n");
     }
 
     // Phase B.3: optionally open a draft PR for drafts that passed.
+    let prMarkdown: string | undefined;
     if (args.pr) {
       const map = loadOrBuildMap({ rootDir });
       const headSha = resolveSha(rootDir, args.head);
@@ -409,8 +428,34 @@ const generateCmd = defineCommand({
         headSha,
         dryRun: Boolean(args["pr-dry-run"]),
       });
+      prMarkdown = formatPrResultMarkdown(prResult);
       process.stdout.write("\n");
-      process.stdout.write(formatPrResultMarkdown(prResult) + "\n");
+      process.stdout.write(prMarkdown + "\n");
+    }
+
+    // Reporter dispatch — only fires when --run actually produced verification
+    // data. Without --run, generate is a drafting-only command and there's
+    // nothing "verified" to surface as a deploy-verified verdict.
+    if (args.run && result.generated.length > 0 && args.target) {
+      const shape = buildGenerateReportShape({ result, target: args.target });
+      const fullMarkdown = prMarkdown ? `${generationMarkdown}\n\n${prMarkdown}` : generationMarkdown;
+      const headSha = resolveSha(rootDir, args.head);
+
+      await dispatchReporters(
+        {
+          markdown: fullMarkdown,
+          headSha,
+          passed: shape.passed,
+          slack: shape.slack,
+          check: shape.check,
+        },
+        {
+          slackWebhook: args["slack-webhook"],
+          disableStepSummary: Boolean(args["no-step-summary"]),
+          disablePrComment: Boolean(args["no-pr-comment"]),
+          disableCheck: Boolean(args["no-check"]),
+        },
+      );
     }
   },
 });
