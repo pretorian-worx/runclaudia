@@ -1,6 +1,6 @@
 {
   "name": "@pretorian-worx/runclaudia-core",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Core library for claudia — diff parser, framework adapters (Next.js / Terraform / Prisma / Playwright), prompt builder, Anthropic SDK wrapper, plan + selection + gating + runner primitives. Consumed by @pretorian-worx/runclaudia-cli and the runclaudia GitHub Action.",
   "type": "module",
   "license": "MIT",
