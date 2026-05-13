@@ -252,7 +252,11 @@ function formatSelectionRationale(selection: SelectionResult): string {
   lines.push(`<summary>Why these specs were selected (${selection.selected.length} files, ${selection.selectedTestCount} tests)</summary>`);
   lines.push("");
   for (const s of selection.selected) {
-    lines.push(`- **${s.file}**`);
+    const badge = s.relevance ? ` · _relevance: **${s.relevance}**_` : "";
+    lines.push(`- **${s.file}**${badge}`);
+    if (s.relevance && s.relevanceRationale) {
+      lines.push(`  - ${s.relevanceRationale}`);
+    }
     const reasons = s.reasons ?? [];
     if (reasons.length === 0) {
       lines.push("  - _no traceable reason (map may be stale — try `--refresh-map`)_");

@@ -310,6 +310,33 @@ export default {
 
 Or one-off via flag: `claudia run --exclude '**/smoke*.spec.ts,**/error-states*.spec.ts' ...`. Excluded specs still count as coverage — if `smoke.spec.ts` covers `/workspaces`, claudia won't surface `/workspaces` as a gap just because you've opted out of running smoke here.
 
+### Why was this spec selected? (rationale + relevance scoring)
+
+Every `claudia run` / `claudia select` now annotates each picked spec with the implicated route(s) and the diff file(s) that put them in scope — so when reachability pulls in something surprising, the trace is right there:
+
+```
+- **e2e/auth.spec.ts** (playwright)
+  - `unauthenticated user is redirected from /workspaces to /signin`
+  - _Selected because:_
+    - covers `/workspaces` — implicated by `src/components/rich-text-editor.tsx`
+```
+
+In the post-deploy verification output the same breakdown lands in a collapsible `<details>` block, keeping the pass-case sticky comment compact while leaving the evidence one click away.
+
+**Optional: LLM relevance scorer.** Enable in `claudia.config.mjs` to add an advisory high/medium/low relevance tag and one-sentence rationale per spec:
+
+```js
+export default {
+  select: {
+    scoreRelevance: true,
+  },
+};
+```
+
+Or per-run: `claudia run --score-relevance`. This is purely **advisory** — the scores show up in the output but **never** change what executes. The reasoning: false negatives in a verification tool are asymmetrically worse than false positives, so we display the signal and let you judge before adding any filter behavior.
+
+Cost: ~$0.05 per run on Sonnet for a typical selection. Sends spec source + diff hunks to Anthropic (same posture as `claudia plan` / `claudia generate`).
+
 ### Where the result surfaces
 
 `claudia run` auto-detects reporting destinations from context. All four skip silently when not applicable:

@@ -9,8 +9,17 @@ export type { PlanRunOptions, PlanRunResult } from "./plan.js";
 export { formatPlanMarkdown, formatPlanJson } from "./plan-format.js";
 export { decideGating } from "./gating.js";
 export type { GatingDecision, GatingMode, GatingOptions, RiskLevel } from "./gating.js";
-export { runSelect, formatSelectionMarkdown } from "./select.js";
-export type { SelectOptions, SelectionResult, SelectedSpec } from "./select.js";
+export { runSelect, formatSelectionMarkdown, attachRelevance } from "./select.js";
+export type { SelectOptions, SelectionResult, SelectedSpec, SpecSelectionReason } from "./select.js";
+export { scoreSpecRelevance, RELEVANCE_LEVELS } from "./relevance.js";
+export type {
+  RelevanceLevel,
+  RelevanceResult,
+  RelevanceUsage,
+  SpecForScoring,
+  SpecRelevance,
+  ScoreOptions,
+} from "./relevance.js";
 export { buildPlaywrightCommand, parsePlaywrightReport, formatRunMarkdown } from "./runner.js";
 export { runGenerate, formatGenerationMarkdown } from "./generate.js";
 export type {

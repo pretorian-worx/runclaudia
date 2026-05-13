@@ -16,6 +16,16 @@ export interface ClaudiaConfig {
      * in @pretorian-worx/runclaudia-core for full semantics.
      */
     excludeSpecs?: string[];
+    /**
+     * Opt into LLM-driven relevance scoring on every `claudia run` /
+     * `claudia select`. ADVISORY ONLY — the scores are displayed alongside
+     * each selected spec's rationale but do NOT change what gets executed.
+     *
+     * Off by default. Sends spec source + diff hunks to Anthropic (same
+     * posture as `claudia plan` / `claudia generate`). Cost: ~$0.05 per
+     * run on Sonnet for a typical-size selection.
+     */
+    scoreRelevance?: boolean;
   };
 }
 

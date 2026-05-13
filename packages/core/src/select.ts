@@ -1,8 +1,16 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { minimatch } from "minimatch";
 import { readDiff } from "./diff.js";
 import { loadOrBuildMap } from "./map.js";
 import { filterMapForDiff } from "./prompt.js";
-import type { SpecEntry } from "./types.js";
+import {
+  scoreSpecRelevance,
+  type RelevanceResult,
+  type RelevanceUsage,
+  type SpecForScoring,
+} from "./relevance.js";
+import type { AppMap, SpecEntry } from "./types.js";
 
 export interface SelectOptions {
   rootDir: string;
@@ -45,6 +53,14 @@ export interface SelectedSpec {
    * traceable reason (shouldn't happen for healthy maps).
    */
   reasons: SpecSelectionReason[];
+  /**
+   * Optional LLM-assigned relevance score (advisory only — does NOT affect
+   * what gets executed). Populated by `attachRelevance` after a separate
+   * Anthropic call. Absent when relevance scoring is disabled.
+   */
+  relevance?: "high" | "medium" | "low";
+  /** One-sentence rationale from the relevance scorer. */
+  relevanceRationale?: string;
 }
 
 export interface SelectionResult {
@@ -204,8 +220,12 @@ export function formatSelectionMarkdown(r: SelectionResult, args: { base: string
   lines.push("### Selected specs");
   for (const s of r.selected) {
     const setup = s.hasSharedSetup ? " · [shared setup — whole file runs]" : "";
-    lines.push(`- **${s.file}** (${s.framework})${setup}`);
+    const badge = s.relevance ? ` · _relevance: **${s.relevance}**_` : "";
+    lines.push(`- **${s.file}** (${s.framework})${setup}${badge}`);
     for (const t of s.tests) lines.push(`  - \`${t}\``);
+    if (s.relevance && s.relevanceRationale) {
+      lines.push(`  - ${s.relevanceRationale}`);
+    }
     const reasons = s.reasons ?? [];
     if (reasons.length > 0) {
       lines.push(`  - _Selected because:_`);
@@ -240,4 +260,92 @@ export function formatSelectionMarkdown(r: SelectionResult, args: { base: string
     lines.push("_All selected specs have shared setup; run the listed files directly._");
   }
   return lines.join("\n");
+}
+
+/**
+ * Attach LLM-driven relevance scores to a SelectionResult, in place.
+ *
+ * Advisory only — never affects `selected`, `playwrightGrep`, or `cypressSpecs`.
+ * Reads each selected spec's source from disk to send to the scorer; on any
+ * failure (missing file, model error, schema mismatch) the relevant field
+ * stays undefined and the run continues. This is a soft enhancement, not a
+ * gate.
+ *
+ * Returns the usage stats so callers can surface token spend.
+ */
+export async function attachRelevance(opts: {
+  rootDir: string;
+  selection: SelectionResult;
+  map: AppMap;
+  base: string;
+  head: string;
+  apiKey?: string;
+  model?: string;
+}): Promise<RelevanceUsage> {
+  if (opts.selection.selected.length === 0) {
+    return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
+  }
+
+  // Build the scorer input. Join the per-file selection with the indexed
+  // spec entries to recover routesCovered / endpointsCovered.
+  const allSpecs = opts.map.specs ?? [];
+  const byFile = new Map<string, { routes: Set<string>; endpoints: Set<string> }>();
+  for (const e of allSpecs) {
+    let entry = byFile.get(e.file);
+    if (!entry) {
+      entry = { routes: new Set(), endpoints: new Set() };
+      byFile.set(e.file, entry);
+    }
+    e.routesCovered.forEach((r) => entry!.routes.add(r));
+    e.endpointsCovered.forEach((r) => entry!.endpoints.add(r));
+  }
+
+  const specsForScoring: SpecForScoring[] = [];
+  for (const s of opts.selection.selected) {
+    let source = "";
+    try {
+      source = readFileSync(join(opts.rootDir, s.file), "utf8");
+    } catch {
+      // Spec moved/deleted since the map was built. Skip — scorer can't help.
+      continue;
+    }
+    const coverage = byFile.get(s.file);
+    specsForScoring.push({
+      file: s.file,
+      source,
+      routesCovered: coverage ? Array.from(coverage.routes).sort() : [],
+      endpointsCovered: coverage ? Array.from(coverage.endpoints).sort() : [],
+    });
+  }
+  if (specsForScoring.length === 0) {
+    return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
+  }
+
+  const diff = readDiff({ base: opts.base, head: opts.head, cwd: opts.rootDir });
+
+  let result: RelevanceResult;
+  try {
+    result = await scoreSpecRelevance({
+      specs: specsForScoring,
+      diff,
+      apiKey: opts.apiKey,
+      model: opts.model,
+    });
+  } catch (err) {
+    // Advisory only — never block a run on scorer failure. Surface to stderr
+    // so the user can see what happened, but keep going.
+    process.stderr.write(
+      `claudia: relevance scorer failed (${err instanceof Error ? err.message : String(err)}); continuing without scores\n`,
+    );
+    return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
+  }
+
+  const scoreByFile = new Map(result.scores.map((s) => [s.file, s]));
+  for (const sel of opts.selection.selected) {
+    const score = scoreByFile.get(sel.file);
+    if (!score) continue;
+    sel.relevance = score.relevance;
+    sel.relevanceRationale = score.rationale;
+  }
+  return result.usage;
 }

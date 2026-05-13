@@ -16,10 +16,11 @@ import {
   PlannerError,
   runGenerate,
   runPlan,
+  attachRelevance,
   runSelect,
 } from "@pretorian-worx/runclaudia-core";
 import { formatJson, formatMarkdown } from "./format.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, type ClaudiaConfig } from "./config.js";
 import { aggregateRatings, formatRatings } from "./ratings.js";
 import { dispatchReporters } from "./reporters.js";
 import { openDraftPr } from "./pr.js";
@@ -112,6 +113,12 @@ const selectCmd = defineCommand({
       description:
         "Comma-separated glob patterns of spec files to exclude from selection (e.g. '**/smoke*.spec.ts,**/error-states*.spec.ts'). Merged with claudia.config.ts select.excludeSpecs.",
     },
+    "score-relevance": {
+      type: "boolean",
+      description:
+        "Run the LLM relevance scorer against the selected specs (advisory only — never changes what executes). Overrides claudia.config.mjs select.scoreRelevance.",
+    },
+    model: { type: "string", description: "Override the relevance-scorer model (default: claude-sonnet-4-6)" },
   },
   async run({ args }) {
     const rootDir = resolve(args.cwd ?? process.cwd());
@@ -124,6 +131,18 @@ const selectCmd = defineCommand({
       refreshMap: Boolean(args["refresh-map"]),
       excludeSpecs,
     });
+
+    if (shouldScoreRelevance(args["score-relevance"], cfg)) {
+      const map = loadOrBuildMap({ rootDir });
+      await attachRelevance({
+        rootDir,
+        selection: result,
+        map,
+        base: args.base,
+        head: args.head,
+        model: args.model,
+      });
+    }
 
     if (args["grep-only"]) {
       process.stdout.write((result.playwrightGrep ?? "") + "\n");
@@ -179,6 +198,12 @@ const runCmd = defineCommand({
       description:
         "Comma-separated glob patterns of spec files to exclude from selection. Merged with claudia.config.ts select.excludeSpecs.",
     },
+    "score-relevance": {
+      type: "boolean",
+      description:
+        "Run the LLM relevance scorer against the selected specs (advisory only — never changes what executes). Overrides claudia.config.mjs select.scoreRelevance.",
+    },
+    model: { type: "string", description: "Override the relevance-scorer model (default: claude-sonnet-4-6)" },
   },
   async run({ args }) {
     const rootDir = resolve(args.cwd ?? process.cwd());
@@ -191,6 +216,18 @@ const runCmd = defineCommand({
       refreshMap: Boolean(args["refresh-map"]),
       excludeSpecs,
     });
+
+    if (shouldScoreRelevance(args["score-relevance"], cfg)) {
+      const map = loadOrBuildMap({ rootDir });
+      await attachRelevance({
+        rootDir,
+        selection,
+        map,
+        base: args.base,
+        head: args.head,
+        model: args.model,
+      });
+    }
 
     const tmpDir = mkdtempSync(join(tmpdir(), "claudia-run-"));
     const jsonReportPath = join(tmpDir, "report.json");
@@ -319,6 +356,18 @@ function mergeExcludePatterns(
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
   return [...(fromConfig ?? []), ...flagPatterns];
+}
+
+/**
+ * Resolve whether relevance scoring should fire. CLI flag wins if explicitly
+ * set (true OR false), otherwise fall through to claudia.config.mjs, otherwise
+ * default off. Off-by-default is deliberate: scoring sends spec source +
+ * diff to Anthropic, which is the same posture as `claudia plan` but on a
+ * per-run cadence rather than per-PR. argile-app opts in via config.
+ */
+function shouldScoreRelevance(flag: boolean | undefined, cfg: ClaudiaConfig): boolean {
+  if (typeof flag === "boolean") return flag;
+  return Boolean(cfg.select?.scoreRelevance);
 }
 
 function resolveSha(cwd: string, ref: string): string {

@@ -50333,7 +50333,189 @@ esm_minimatch.Minimatch = Minimatch;
 esm_minimatch.escape = escape_escape;
 esm_minimatch.unescape = unescape_unescape;
 //# sourceMappingURL=index.js.map
+;// CONCATENATED MODULE: ../core/dist/relevance.js
+/**
+ * LLM-driven relevance scoring for the candidate spec set produced by
+ * `runSelect`. ADVISORY ONLY — the output is rendered alongside selection,
+ * never used to filter what runs. This is the v0.20 entry point on the trust
+ * gradient: display signal first, earn trust, only later expose any kind of
+ * filter flag.
+ *
+ * Why advisory: false negatives in a verification tool are asymmetrically
+ * worse than false positives. Running 38 specs when 12 would do is a few
+ * minutes of CI; silently skipping the one spec that would have caught a
+ * real regression is the failure mode claudia exists to prevent. The model
+ * scores; the user decides.
+ */
+
+
+const RELEVANCE_LEVELS = ["high", "medium", "low"];
+const relevance_SYSTEM_PROMPT = (/* unused pure expression or super */ null && (`You are claudia's relevance scorer. You read a diff and a set of E2E specs that were preselected by a static reachability graph (the diff touches files those specs' covered routes depend on). Your job is to rate, per spec, how *likely* the diff is to affect what each spec actually asserts.
+
+Output ADVISORY signal only — the team will see your scores but will still run every preselected spec. Your scores help them understand why selection was wide; they do not filter execution.
+
+Scoring rubric:
+- "high": the diff plausibly changes behavior the spec asserts on. Examples: spec asserts on text content of a page and the diff edits that page; spec asserts a successful API call and the diff edits the endpoint or its calling component; spec asserts auth redirect and the diff touches auth middleware.
+- "medium": the diff touches files reachable from the spec's routes, but the spec's assertions are about a different concern (e.g. spec asserts a button exists on /workspaces; diff edits the rich-text editor used by a child page). The spec *could* still catch a regression if the change has cross-cutting side effects (global window props, monkey-patches, broken imports), but it's not the primary risk.
+- "low": the diff is reachable from the spec's routes only via deep transitive imports (shared layout, design-system component, utility module), and the change is structural/internal to that imported file with no plausible causal path to break the spec's assertions. The spec was selected by graph reachability but the change is not "about" what the spec tests.
+
+Be conservative. When unsure between two levels, pick the higher one. False negatives are far costlier than false positives — a "low" rating that misses a real regression is much worse than a "high" rating that runs unnecessary specs.
+
+Each rationale must be ONE sentence, terse, citing the specific causal link (or absence of one). Examples:
+- "Diff edits the page /checkout's component tree; spec asserts page renders."
+- "Spec covers /workspaces only via the layout; diff is internal to the rich-text editor used by a sibling route."
+
+Score every spec in the input. If a spec is unreadable or you cannot judge, score it "high" and say so in the rationale.`));
+const RELEVANCE_TOOL = {
+    name: "emit_relevance",
+    description: "Emit the relevance score for every preselected spec.",
+    input_schema: {
+        type: "object",
+        required: ["scores"],
+        properties: {
+            scores: {
+                type: "array",
+                items: {
+                    type: "object",
+                    required: ["file", "relevance", "rationale"],
+                    properties: {
+                        file: { type: "string" },
+                        relevance: { type: "string", enum: ["high", "medium", "low"] },
+                        rationale: { type: "string" },
+                    },
+                },
+            },
+        },
+    },
+};
+const ScoreSchema = objectType({
+    file: stringType(),
+    relevance: enumType(RELEVANCE_LEVELS),
+    rationale: stringType(),
+});
+const ScoresSchema = objectType({ scores: arrayType(ScoreSchema) });
+async function relevance_scoreSpecRelevance(opts) {
+    const apiKey = opts.apiKey ?? process.env.ANTHROPIC_API_KEY;
+    if (!apiKey)
+        throw new Error("ANTHROPIC_API_KEY is not set");
+    if (opts.specs.length === 0) {
+        return {
+            scores: [],
+            unscored: [],
+            usage: { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },
+        };
+    }
+    const client = new Anthropic({ apiKey });
+    const model = opts.model ?? "claude-sonnet-4-6";
+    const maxSpecChars = opts.maxSpecChars ?? 8_000;
+    const maxDiffChars = opts.maxDiffChars ?? 50_000;
+    const specsBlock = formatSpecsBlock(opts.specs, maxSpecChars);
+    const diffBlock = formatDiffBlock(opts.diff, maxDiffChars);
+    const response = await client.messages.create({
+        model,
+        max_tokens: 4096,
+        system: [{ type: "text", text: relevance_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+        tools: [RELEVANCE_TOOL],
+        tool_choice: { type: "tool", name: "emit_relevance" },
+        messages: [
+            {
+                role: "user",
+                content: [
+                    { type: "text", text: specsBlock, cache_control: { type: "ephemeral" } },
+                    { type: "text", text: diffBlock },
+                ],
+            },
+        ],
+    });
+    const toolUse = response.content.find((b) => b.type === "tool_use" && b.name === "emit_relevance");
+    if (!toolUse) {
+        // Model didn't call the tool. Surface every spec as unscored rather than
+        // throwing — the rest of the run should continue, this is advisory.
+        return {
+            scores: [],
+            unscored: opts.specs.map((s) => s.file),
+            usage: extractUsage(response.usage),
+        };
+    }
+    const parsed = ScoresSchema.safeParse(toolUse.input);
+    if (!parsed.success) {
+        return {
+            scores: [],
+            unscored: opts.specs.map((s) => s.file),
+            usage: extractUsage(response.usage),
+        };
+    }
+    // Filter the model's output to the specs we actually asked about — guards
+    // against hallucinated file names being attached to real-looking scores.
+    const requested = new Set(opts.specs.map((s) => s.file));
+    const scores = parsed.data.scores.filter((s) => requested.has(s.file));
+    const scoredSet = new Set(scores.map((s) => s.file));
+    const unscored = opts.specs.map((s) => s.file).filter((f) => !scoredSet.has(f));
+    return { scores, unscored, usage: extractUsage(response.usage) };
+}
+function formatSpecsBlock(specs, maxChars) {
+    const parts = [
+        "<preselected-specs>",
+        "Each spec below was selected by reachability — the diff touches at least one file in the import closure of one of its `routesCovered`. Score each based on whether the diff's *intent* is likely to affect what the spec asserts.",
+        "",
+    ];
+    for (const s of specs) {
+        parts.push(`### ${s.file}`);
+        if (s.routesCovered.length > 0)
+            parts.push(`routesCovered: ${s.routesCovered.join(", ")}`);
+        if (s.endpointsCovered.length > 0)
+            parts.push(`endpointsCovered: ${s.endpointsCovered.join(", ")}`);
+        parts.push("```ts");
+        parts.push(relevance_truncate(s.source, maxChars));
+        parts.push("```");
+        parts.push("");
+    }
+    parts.push("</preselected-specs>");
+    return parts.join("\n");
+}
+function formatDiffBlock(diff, maxChars) {
+    const parts = ["<diff>"];
+    let used = 0;
+    for (const file of diff.files) {
+        if (file.binary)
+            continue;
+        const header = `### ${file.path} (${file.status}, +${file.additions}/-${file.deletions})`;
+        const body = renderHunks(file);
+        const chunk = `${header}\n${body}\n`;
+        if (used + chunk.length > maxChars) {
+            parts.push(`_… diff truncated at ${maxChars} chars; remaining files: ${diff.files.length - diff.files.indexOf(file)} …_`);
+            break;
+        }
+        parts.push(chunk);
+        used += chunk.length;
+    }
+    parts.push("</diff>");
+    return parts.join("\n");
+}
+function renderHunks(file) {
+    if (file.hunks.length === 0)
+        return "_(no hunks — file added/deleted/renamed only)_";
+    return ["```diff", ...file.hunks, "```"].join("\n");
+}
+function relevance_truncate(s, n) {
+    if (s.length <= n)
+        return s;
+    return s.slice(0, n - 1) + "\n… [truncated]";
+}
+function extractUsage(usage) {
+    const u = usage;
+    return {
+        inputTokens: u.input_tokens ?? 0,
+        outputTokens: u.output_tokens ?? 0,
+        cacheCreationTokens: u.cache_creation_input_tokens ?? 0,
+        cacheReadTokens: u.cache_read_input_tokens ?? 0,
+    };
+}
+//# sourceMappingURL=relevance.js.map
 ;// CONCATENATED MODULE: ../core/dist/select.js
+
+
+
 
 
 
@@ -50471,9 +50653,13 @@ function formatSelectionMarkdown(r, args) {
     lines.push("### Selected specs");
     for (const s of r.selected) {
         const setup = s.hasSharedSetup ? " · [shared setup — whole file runs]" : "";
-        lines.push(`- **${s.file}** (${s.framework})${setup}`);
+        const badge = s.relevance ? ` · _relevance: **${s.relevance}**_` : "";
+        lines.push(`- **${s.file}** (${s.framework})${setup}${badge}`);
         for (const t of s.tests)
             lines.push(`  - \`${t}\``);
+        if (s.relevance && s.relevanceRationale) {
+            lines.push(`  - ${s.relevanceRationale}`);
+        }
         const reasons = s.reasons ?? [];
         if (reasons.length > 0) {
             lines.push(`  - _Selected because:_`);
@@ -50508,6 +50694,81 @@ function formatSelectionMarkdown(r, args) {
         lines.push("_All selected specs have shared setup; run the listed files directly._");
     }
     return lines.join("\n");
+}
+/**
+ * Attach LLM-driven relevance scores to a SelectionResult, in place.
+ *
+ * Advisory only — never affects `selected`, `playwrightGrep`, or `cypressSpecs`.
+ * Reads each selected spec's source from disk to send to the scorer; on any
+ * failure (missing file, model error, schema mismatch) the relevant field
+ * stays undefined and the run continues. This is a soft enhancement, not a
+ * gate.
+ *
+ * Returns the usage stats so callers can surface token spend.
+ */
+async function attachRelevance(opts) {
+    if (opts.selection.selected.length === 0) {
+        return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
+    }
+    // Build the scorer input. Join the per-file selection with the indexed
+    // spec entries to recover routesCovered / endpointsCovered.
+    const allSpecs = opts.map.specs ?? [];
+    const byFile = new Map();
+    for (const e of allSpecs) {
+        let entry = byFile.get(e.file);
+        if (!entry) {
+            entry = { routes: new Set(), endpoints: new Set() };
+            byFile.set(e.file, entry);
+        }
+        e.routesCovered.forEach((r) => entry.routes.add(r));
+        e.endpointsCovered.forEach((r) => entry.endpoints.add(r));
+    }
+    const specsForScoring = [];
+    for (const s of opts.selection.selected) {
+        let source = "";
+        try {
+            source = readFileSync(join(opts.rootDir, s.file), "utf8");
+        }
+        catch {
+            // Spec moved/deleted since the map was built. Skip — scorer can't help.
+            continue;
+        }
+        const coverage = byFile.get(s.file);
+        specsForScoring.push({
+            file: s.file,
+            source,
+            routesCovered: coverage ? Array.from(coverage.routes).sort() : [],
+            endpointsCovered: coverage ? Array.from(coverage.endpoints).sort() : [],
+        });
+    }
+    if (specsForScoring.length === 0) {
+        return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
+    }
+    const diff = readDiff({ base: opts.base, head: opts.head, cwd: opts.rootDir });
+    let result;
+    try {
+        result = await scoreSpecRelevance({
+            specs: specsForScoring,
+            diff,
+            apiKey: opts.apiKey,
+            model: opts.model,
+        });
+    }
+    catch (err) {
+        // Advisory only — never block a run on scorer failure. Surface to stderr
+        // so the user can see what happened, but keep going.
+        process.stderr.write(`claudia: relevance scorer failed (${err instanceof Error ? err.message : String(err)}); continuing without scores\n`);
+        return { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 };
+    }
+    const scoreByFile = new Map(result.scores.map((s) => [s.file, s]));
+    for (const sel of opts.selection.selected) {
+        const score = scoreByFile.get(sel.file);
+        if (!score)
+            continue;
+        sel.relevance = score.relevance;
+        sel.relevanceRationale = score.rationale;
+    }
+    return result.usage;
 }
 //# sourceMappingURL=select.js.map
 ;// CONCATENATED MODULE: ../core/dist/runner.js
@@ -50670,7 +50931,11 @@ function formatSelectionRationale(selection) {
     lines.push(`<summary>Why these specs were selected (${selection.selected.length} files, ${selection.selectedTestCount} tests)</summary>`);
     lines.push("");
     for (const s of selection.selected) {
-        lines.push(`- **${s.file}**`);
+        const badge = s.relevance ? ` · _relevance: **${s.relevance}**_` : "";
+        lines.push(`- **${s.file}**${badge}`);
+        if (s.relevance && s.relevanceRationale) {
+            lines.push(`  - ${s.relevanceRationale}`);
+        }
         const reasons = s.reasons ?? [];
         if (reasons.length === 0) {
             lines.push("  - _no traceable reason (map may be stale — try `--refresh-map`)_");
@@ -50994,6 +51259,7 @@ void external_node_fs_namespaceObject.readdirSync;
 void external_node_path_namespaceObject.dirname;
 //# sourceMappingURL=generate.js.map
 ;// CONCATENATED MODULE: ../core/dist/index.js
+
 
 
 
