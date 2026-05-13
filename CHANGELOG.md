@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.0](https://github.com/pretorian-worx/runclaudia/compare/v0.19.0...v0.20.0) (2026-05-13)
+
+
+### Features
+
+* LLM-driven spec relevance scoring (advisory) ([ed3084a](https://github.com/pretorian-worx/runclaudia/commit/ed3084a78c889d85077f287cf81e63eeb5a3a7dc))
+* surface why each spec was selected in claudia run + select output ([166f9f4](https://github.com/pretorian-worx/runclaudia/commit/166f9f4e11f5bc1f0c40dfadd63793081b18fc60))
+
 ## [0.19.0](https://github.com/pretorian-worx/runclaudia/compare/v0.18.0...v0.19.0) (2026-05-13)
 
 
