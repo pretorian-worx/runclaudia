@@ -64,6 +64,18 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
   uncoveredRoutes: string[];
   /** Endpoints implicated by the diff that have NO covering spec. */
   uncoveredEndpoints: string[];
+  /**
+   * Per-route reachability rationale: maps an implicated route path to the
+   * diff file(s) that put it in scope. Used by `claudia select` to surface
+   * *why* each spec was picked rather than just *which* specs were picked.
+   */
+  routeReasons: Record<string, string[]>;
+  /**
+   * Per-endpoint rationale: maps an implicated endpoint route (with method
+   * prefix, e.g. "POST /api/bugs") to the diff file(s) that put it in scope.
+   * Includes both directly-changed endpoint files and indirect callers.
+   */
+  endpointReasons: Record<string, string[]>;
 } {
   const diffPaths = new Set<string>();
   for (const f of diff.files) {
@@ -71,8 +83,19 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
     if (f.oldPath) diffPaths.add(f.oldPath);
   }
   const implicated = map.routes.filter((r) => r.files.some((file) => diffPaths.has(file)));
+  const routeReasons: Record<string, string[]> = {};
+  for (const r of implicated) {
+    const matched = r.files.filter((f) => diffPaths.has(f));
+    routeReasons[r.route] = Array.from(new Set(matched)).sort();
+  }
   const endpoints = map.endpoints ?? [];
   const implicatedEndpoints = endpoints.filter((e) => diffPaths.has(e.file));
+  const endpointReasons: Record<string, string[]> = {};
+  for (const e of implicatedEndpoints) {
+    // e.route already includes the method prefix (e.g. "POST /api/bugs"), so
+    // we key on it directly — matches the shape used in spec.endpointsCovered.
+    endpointReasons[e.route] = [e.file];
+  }
 
   // Indirect linkage: a changed file calls an endpoint whose handler isn't itself
   // in the diff. We want the brain to consider the contract between the UI and
@@ -94,10 +117,10 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
   for (const [route, callerFiles] of calledRouteToCallers) {
     const endpoint = endpointsByRoute.get(route);
     if (!endpoint) continue;
-    endpointsCalledByDiff.push({
-      endpoint,
-      callerFiles: Array.from(new Set(callerFiles)).sort(),
-    });
+    const sortedCallers = Array.from(new Set(callerFiles)).sort();
+    endpointsCalledByDiff.push({ endpoint, callerFiles: sortedCallers });
+    const prior = endpointReasons[endpoint.route] ?? [];
+    endpointReasons[endpoint.route] = Array.from(new Set([...prior, ...sortedCallers])).sort();
   }
   endpointsCalledByDiff.sort((a, b) => a.endpoint.route.localeCompare(b.endpoint.route));
 
@@ -140,6 +163,8 @@ export function filterMapForDiff(map: AppMap, diff: Diff): {
     coveringSpecs,
     uncoveredRoutes,
     uncoveredEndpoints,
+    routeReasons,
+    endpointReasons,
   };
 }
 

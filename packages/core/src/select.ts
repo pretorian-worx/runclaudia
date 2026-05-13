@@ -22,6 +22,15 @@ export interface SelectOptions {
   excludeSpecs?: string[];
 }
 
+export interface SpecSelectionReason {
+  /** The implicated route or endpoint (with method prefix) that pulled this spec in. */
+  flow: string;
+  /** Whether `flow` is a UI route or an API endpoint. */
+  kind: "route" | "endpoint";
+  /** Diff files responsible for putting `flow` in scope (the join we previously discarded). */
+  via: string[];
+}
+
 export interface SelectedSpec {
   framework: SpecEntry["framework"];
   file: string;
@@ -29,6 +38,13 @@ export interface SelectedSpec {
   tests: string[];
   /** Whether the file has a beforeAll / before() hook — selecting any test forces the whole file. */
   hasSharedSetup: boolean;
+  /**
+   * Why this spec was selected: each implicated route/endpoint the spec
+   * covers, plus the diff files that made that route/endpoint implicated.
+   * Empty array means "selected by inclusion in coveringSpecs" with no
+   * traceable reason (shouldn't happen for healthy maps).
+   */
+  reasons: SpecSelectionReason[];
 }
 
 export interface SelectionResult {
@@ -76,10 +92,30 @@ export function runSelect(opts: SelectOptions): SelectionResult {
         file: s.file,
         tests: [],
         hasSharedSetup: s.hasSharedSetup,
+        reasons: [],
       };
       byFile.set(s.file, entry);
     }
     entry.tests.push(s.name);
+  }
+
+  // Plumb per-spec selection rationale: join each spec's covered routes/
+  // endpoints against the reason maps from filterMapForDiff. Surfaces the
+  // "implicated by file X" trace the user needs to debug over-selection.
+  const implicatedRouteSet = new Set(Object.keys(filtered.routeReasons));
+  const implicatedEndpointSet = new Set(Object.keys(filtered.endpointReasons));
+  for (const [file, entry] of byFile) {
+    const sourceSpec = visibleSpecs.find((s) => s.file === file)!;
+    const reasons: SpecSelectionReason[] = [];
+    for (const route of sourceSpec.routesCovered) {
+      if (!implicatedRouteSet.has(route)) continue;
+      reasons.push({ flow: route, kind: "route", via: filtered.routeReasons[route]! });
+    }
+    for (const ep of sourceSpec.endpointsCovered) {
+      if (!implicatedEndpointSet.has(ep)) continue;
+      reasons.push({ flow: ep, kind: "endpoint", via: filtered.endpointReasons[ep]! });
+    }
+    entry.reasons = reasons;
   }
 
   const selected = Array.from(byFile.values()).map((s) => ({
@@ -170,6 +206,14 @@ export function formatSelectionMarkdown(r: SelectionResult, args: { base: string
     const setup = s.hasSharedSetup ? " · [shared setup — whole file runs]" : "";
     lines.push(`- **${s.file}** (${s.framework})${setup}`);
     for (const t of s.tests) lines.push(`  - \`${t}\``);
+    const reasons = s.reasons ?? [];
+    if (reasons.length > 0) {
+      lines.push(`  - _Selected because:_`);
+      for (const reason of reasons) {
+        const via = reason.via.length === 1 ? reason.via[0] : `${reason.via.length} files: ${reason.via.slice(0, 3).join(", ")}${reason.via.length > 3 ? ", …" : ""}`;
+        lines.push(`    - covers \`${reason.flow}\` — implicated by \`${via}\``);
+      }
+    }
   }
 
   if (r.uncoveredRoutes.length > 0 || r.uncoveredEndpoints.length > 0) {

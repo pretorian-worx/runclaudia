@@ -331,3 +331,78 @@ describe("formatSelectionMarkdown", () => {
     expect(md).not.toContain("No covering specs"); // old phrasing
   });
 });
+
+describe("runSelect — selection rationale", () => {
+  it("records the diff file responsible for each route-implicated spec", () => {
+    const map = makeMap();
+    // Wire the checkout page to also reach a shared component, so we can
+    // verify that the join keeps only the file that actually touched it.
+    map.routes = [
+      { route: "/checkout", files: ["app/checkout/page.tsx", "components/rich-text-editor.tsx"] },
+      { route: "/about", files: ["app/about/page.tsx", "components/rich-text-editor.tsx"] },
+    ];
+    stub(map, ["components/rich-text-editor.tsx"]);
+
+    const r = runSelect({ rootDir: "/repo", base: "a", head: "b" });
+    // Both the checkout and about specs should be selected (both routes
+    // reachable from the changed component), with the rationale naming
+    // the component as the responsible diff file.
+    const checkout = r.selected.find((s) => s.file === "e2e/checkout.spec.ts");
+    expect(checkout).toBeDefined();
+    expect(checkout!.reasons).toEqual([
+      { flow: "/checkout", kind: "route", via: ["components/rich-text-editor.tsx"] },
+    ]);
+    const about = r.selected.find((s) => s.file === "cypress/e2e/about.cy.ts");
+    expect(about).toBeDefined();
+    expect(about!.reasons).toEqual([
+      { flow: "/about", kind: "route", via: ["components/rich-text-editor.tsx"] },
+    ]);
+  });
+
+  it("records the endpoint file for endpoint-implicated specs", () => {
+    stub(makeMap(), ["app/api/bugs/route.ts"]);
+    const r = runSelect({ rootDir: "/repo", base: "a", head: "b" });
+    const bugs = r.selected.find((s) => s.file === "e2e/bugs.spec.ts")!;
+    expect(bugs.reasons).toEqual([
+      { flow: "POST /api/bugs", kind: "endpoint", via: ["app/api/bugs/route.ts"] },
+    ]);
+  });
+
+  it("renders the rationale in formatSelectionMarkdown", () => {
+    const map = makeMap();
+    map.routes = [
+      { route: "/checkout", files: ["app/checkout/page.tsx", "components/rich-text-editor.tsx"] },
+    ];
+    stub(map, ["components/rich-text-editor.tsx"]);
+    const r = runSelect({ rootDir: "/repo", base: "a", head: "b" });
+    const md = formatSelectionMarkdown(r, { base: "a", head: "b" });
+    expect(md).toContain("_Selected because:_");
+    expect(md).toContain("covers `/checkout`");
+    expect(md).toContain("`components/rich-text-editor.tsx`");
+  });
+
+  it("collapses multi-file reasons into a short summary", () => {
+    const map = makeMap();
+    map.routes = [
+      {
+        route: "/checkout",
+        files: [
+          "app/checkout/page.tsx",
+          "components/a.tsx",
+          "components/b.tsx",
+          "components/c.tsx",
+          "components/d.tsx",
+        ],
+      },
+    ];
+    stub(map, [
+      "components/a.tsx",
+      "components/b.tsx",
+      "components/c.tsx",
+      "components/d.tsx",
+    ]);
+    const r = runSelect({ rootDir: "/repo", base: "a", head: "b" });
+    const md = formatSelectionMarkdown(r, { base: "a", head: "b" });
+    expect(md).toContain("4 files: components/a.tsx, components/b.tsx, components/c.tsx, …");
+  });
+});

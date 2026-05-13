@@ -47340,8 +47340,19 @@ function prompt_filterMapForDiff(map, diff) {
             diffPaths.add(f.oldPath);
     }
     const implicated = map.routes.filter((r) => r.files.some((file) => diffPaths.has(file)));
+    const routeReasons = {};
+    for (const r of implicated) {
+        const matched = r.files.filter((f) => diffPaths.has(f));
+        routeReasons[r.route] = Array.from(new Set(matched)).sort();
+    }
     const endpoints = map.endpoints ?? [];
     const implicatedEndpoints = endpoints.filter((e) => diffPaths.has(e.file));
+    const endpointReasons = {};
+    for (const e of implicatedEndpoints) {
+        // e.route already includes the method prefix (e.g. "POST /api/bugs"), so
+        // we key on it directly — matches the shape used in spec.endpointsCovered.
+        endpointReasons[e.route] = [e.file];
+    }
     // Indirect linkage: a changed file calls an endpoint whose handler isn't itself
     // in the diff. We want the brain to consider the contract between the UI and
     // that endpoint as part of the flow.
@@ -47364,10 +47375,10 @@ function prompt_filterMapForDiff(map, diff) {
         const endpoint = endpointsByRoute.get(route);
         if (!endpoint)
             continue;
-        endpointsCalledByDiff.push({
-            endpoint,
-            callerFiles: Array.from(new Set(callerFiles)).sort(),
-        });
+        const sortedCallers = Array.from(new Set(callerFiles)).sort();
+        endpointsCalledByDiff.push({ endpoint, callerFiles: sortedCallers });
+        const prior = endpointReasons[endpoint.route] ?? [];
+        endpointReasons[endpoint.route] = Array.from(new Set([...prior, ...sortedCallers])).sort();
     }
     endpointsCalledByDiff.sort((a, b) => a.endpoint.route.localeCompare(b.endpoint.route));
     const infra = map.infra ?? [];
@@ -47403,6 +47414,8 @@ function prompt_filterMapForDiff(map, diff) {
         coveringSpecs,
         uncoveredRoutes,
         uncoveredEndpoints,
+        routeReasons,
+        endpointReasons,
     };
 }
 function buildUserMessage(args) {
@@ -50352,10 +50365,31 @@ function runSelect(opts) {
                 file: s.file,
                 tests: [],
                 hasSharedSetup: s.hasSharedSetup,
+                reasons: [],
             };
             byFile.set(s.file, entry);
         }
         entry.tests.push(s.name);
+    }
+    // Plumb per-spec selection rationale: join each spec's covered routes/
+    // endpoints against the reason maps from filterMapForDiff. Surfaces the
+    // "implicated by file X" trace the user needs to debug over-selection.
+    const implicatedRouteSet = new Set(Object.keys(filtered.routeReasons));
+    const implicatedEndpointSet = new Set(Object.keys(filtered.endpointReasons));
+    for (const [file, entry] of byFile) {
+        const sourceSpec = visibleSpecs.find((s) => s.file === file);
+        const reasons = [];
+        for (const route of sourceSpec.routesCovered) {
+            if (!implicatedRouteSet.has(route))
+                continue;
+            reasons.push({ flow: route, kind: "route", via: filtered.routeReasons[route] });
+        }
+        for (const ep of sourceSpec.endpointsCovered) {
+            if (!implicatedEndpointSet.has(ep))
+                continue;
+            reasons.push({ flow: ep, kind: "endpoint", via: filtered.endpointReasons[ep] });
+        }
+        entry.reasons = reasons;
     }
     const selected = Array.from(byFile.values()).map((s) => ({
         ...s,
@@ -50440,6 +50474,14 @@ function formatSelectionMarkdown(r, args) {
         lines.push(`- **${s.file}** (${s.framework})${setup}`);
         for (const t of s.tests)
             lines.push(`  - \`${t}\``);
+        const reasons = s.reasons ?? [];
+        if (reasons.length > 0) {
+            lines.push(`  - _Selected because:_`);
+            for (const reason of reasons) {
+                const via = reason.via.length === 1 ? reason.via[0] : `${reason.via.length} files: ${reason.via.slice(0, 3).join(", ")}${reason.via.length > 3 ? ", …" : ""}`;
+                lines.push(`    - covers \`${reason.flow}\` — implicated by \`${via}\``);
+            }
+        }
     }
     if (r.uncoveredRoutes.length > 0 || r.uncoveredEndpoints.length > 0) {
         lines.push("");
@@ -50607,6 +50649,41 @@ function formatRunMarkdown(args) {
             lines.push("```");
         }
     }
+    const rationale = formatSelectionRationale(args.selection);
+    if (rationale) {
+        lines.push("");
+        lines.push(rationale);
+    }
+    return lines.join("\n");
+}
+/**
+ * Render a `<details>` block listing why each selected spec was picked. Stays
+ * folded by default so the pass-case report stays compact, but lets the
+ * reader drill in when over-selection looks suspicious. Returns "" when
+ * there's no rationale to show (empty selection).
+ */
+function formatSelectionRationale(selection) {
+    if (selection.selected.length === 0)
+        return "";
+    const lines = [];
+    lines.push("<details>");
+    lines.push(`<summary>Why these specs were selected (${selection.selected.length} files, ${selection.selectedTestCount} tests)</summary>`);
+    lines.push("");
+    for (const s of selection.selected) {
+        lines.push(`- **${s.file}**`);
+        const reasons = s.reasons ?? [];
+        if (reasons.length === 0) {
+            lines.push("  - _no traceable reason (map may be stale — try `--refresh-map`)_");
+            continue;
+        }
+        for (const reason of reasons) {
+            const via = reason.via.length === 1
+                ? reason.via[0]
+                : `${reason.via.length} files: ${reason.via.slice(0, 3).join(", ")}${reason.via.length > 3 ? ", …" : ""}`;
+            lines.push(`  - covers \`${reason.flow}\` — implicated by \`${via}\``);
+        }
+    }
+    lines.push("</details>");
     return lines.join("\n");
 }
 function runner_truncate(s, n) {

@@ -230,6 +230,42 @@ export function formatRunMarkdown(args: {
     }
   }
 
+  const rationale = formatSelectionRationale(args.selection);
+  if (rationale) {
+    lines.push("");
+    lines.push(rationale);
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Render a `<details>` block listing why each selected spec was picked. Stays
+ * folded by default so the pass-case report stays compact, but lets the
+ * reader drill in when over-selection looks suspicious. Returns "" when
+ * there's no rationale to show (empty selection).
+ */
+function formatSelectionRationale(selection: SelectionResult): string {
+  if (selection.selected.length === 0) return "";
+  const lines: string[] = [];
+  lines.push("<details>");
+  lines.push(`<summary>Why these specs were selected (${selection.selected.length} files, ${selection.selectedTestCount} tests)</summary>`);
+  lines.push("");
+  for (const s of selection.selected) {
+    lines.push(`- **${s.file}**`);
+    const reasons = s.reasons ?? [];
+    if (reasons.length === 0) {
+      lines.push("  - _no traceable reason (map may be stale — try `--refresh-map`)_");
+      continue;
+    }
+    for (const reason of reasons) {
+      const via = reason.via.length === 1
+        ? reason.via[0]
+        : `${reason.via.length} files: ${reason.via.slice(0, 3).join(", ")}${reason.via.length > 3 ? ", …" : ""}`;
+      lines.push(`  - covers \`${reason.flow}\` — implicated by \`${via}\``);
+    }
+  }
+  lines.push("</details>");
   return lines.join("\n");
 }
 
