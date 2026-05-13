@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/pretorian-worx/runclaudia/compare/v0.17.0...v0.18.0) (2026-05-13)
+
+
+### Features
+
+* post a 'claudia / deploy-verified' GitHub check from claudia run ([d409d18](https://github.com/pretorian-worx/runclaudia/commit/d409d1857c431540fdee569297347ddaba8f6586))
+
 ## [0.17.0](https://github.com/pretorian-worx/runclaudia/compare/v0.16.0...v0.17.0) (2026-05-12)
 
 
