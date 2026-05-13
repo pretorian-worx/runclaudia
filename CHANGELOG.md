@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/pretorian-worx/runclaudia/compare/v0.18.0...v0.19.0) (2026-05-13)
+
+
+### Features
+
+* dispatch reporters from claudia generate --run ([9e87f54](https://github.com/pretorian-worx/runclaudia/commit/9e87f5493956402d44d470e3f04c2cb6d9651df6))
+
 ## [0.18.0](https://github.com/pretorian-worx/runclaudia/compare/v0.17.0...v0.18.0) (2026-05-13)
 
 
