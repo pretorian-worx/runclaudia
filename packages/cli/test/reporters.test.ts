@@ -154,3 +154,110 @@ describe("Slack reporter", () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe("GitHub check reporter", () => {
+  it("posts a check-run via `gh api` when ctx.check is provided", async () => {
+    process.env.GITHUB_REPOSITORY = "argilefocus/argile-focus-webapp";
+    execMock.mockImplementation((_cmd: string, args: string[]) => {
+      // The PR-lookup call goes to /commits/<sha>/pulls — return no PR so we
+      // don't interfere with the PR-comment sink.
+      if (args.join(" ").includes("/commits/")) return "null";
+      return "";
+    });
+
+    await dispatchReporters(
+      baseCtx({
+        check: { passed: true, passedCount: 3, failedCount: 0, target: "https://app.example.com" },
+      }),
+    );
+
+    const checkCall = execMock.mock.calls.find(
+      (c) => Array.isArray(c[1]) && c[1].some((s: string) => s.includes("/check-runs")),
+    );
+    expect(checkCall).toBeDefined();
+    const flatArgs = (checkCall![1] as string[]).join(" ");
+    expect(flatArgs).toContain("POST");
+    expect(flatArgs).toContain("/repos/argilefocus/argile-focus-webapp/check-runs");
+    expect(flatArgs).toContain("name=claudia / deploy-verified");
+    expect(flatArgs).toContain("head_sha=abc1234567890");
+    expect(flatArgs).toContain("conclusion=success");
+    expect(flatArgs).toContain("output[title]=3 tests passed against app.example.com");
+  });
+
+  it("posts conclusion=failure when the run failed", async () => {
+    process.env.GITHUB_REPOSITORY = "x/y";
+    execMock.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.join(" ").includes("/commits/")) return "null";
+      return "";
+    });
+
+    await dispatchReporters(
+      baseCtx({
+        passed: false,
+        check: { passed: false, passedCount: 1, failedCount: 2 },
+      }),
+    );
+
+    const checkCall = execMock.mock.calls.find(
+      (c) => Array.isArray(c[1]) && c[1].some((s: string) => s.includes("/check-runs")),
+    );
+    expect(checkCall).toBeDefined();
+    expect((checkCall![1] as string[]).join(" ")).toContain("conclusion=failure");
+  });
+
+  it("skips when ctx.check is not provided", async () => {
+    process.env.GITHUB_REPOSITORY = "x/y";
+    execMock.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.join(" ").includes("/commits/")) return "null";
+      return "";
+    });
+    await dispatchReporters(baseCtx());
+    const checkCall = execMock.mock.calls.find(
+      (c) => Array.isArray(c[1]) && c[1].some((s: string) => s.includes("/check-runs")),
+    );
+    expect(checkCall).toBeUndefined();
+  });
+
+  it("honors --no-check", async () => {
+    process.env.GITHUB_REPOSITORY = "x/y";
+    execMock.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.join(" ").includes("/commits/")) return "null";
+      return "";
+    });
+    await dispatchReporters(
+      baseCtx({ check: { passed: true, passedCount: 1, failedCount: 0 } }),
+      { disableCheck: true },
+    );
+    const checkCall = execMock.mock.calls.find(
+      (c) => Array.isArray(c[1]) && c[1].some((s: string) => s.includes("/check-runs")),
+    );
+    expect(checkCall).toBeUndefined();
+  });
+
+  it("skips when no repo can be detected", async () => {
+    delete process.env.GITHUB_REPOSITORY;
+    await dispatchReporters(
+      baseCtx({ check: { passed: true, passedCount: 1, failedCount: 0 } }),
+    );
+    const checkCall = execMock.mock.calls.find(
+      (c) => Array.isArray(c[1]) && c[1].some((s: string) => s.includes("/check-runs")),
+    );
+    expect(checkCall).toBeUndefined();
+  });
+
+  it("does not throw when gh exits non-zero (e.g. missing `checks: write`)", async () => {
+    process.env.GITHUB_REPOSITORY = "x/y";
+    execMock.mockImplementation((_cmd: string, args: string[]) => {
+      if (args.join(" ").includes("/commits/")) return "null";
+      if (args.join(" ").includes("/check-runs")) {
+        throw new Error("HTTP 403: Resource not accessible by integration");
+      }
+      return "";
+    });
+    await expect(
+      dispatchReporters(
+        baseCtx({ check: { passed: true, passedCount: 1, failedCount: 0 } }),
+      ),
+    ).resolves.toBeUndefined();
+  });
+});

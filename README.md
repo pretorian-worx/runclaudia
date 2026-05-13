@@ -310,15 +310,16 @@ Or one-off via flag: `claudia run --exclude '**/smoke*.spec.ts,**/error-states*.
 
 ### Where the result surfaces
 
-`claudia run` auto-detects reporting destinations from context. All three skip silently when not applicable:
+`claudia run` auto-detects reporting destinations from context. All four skip silently when not applicable:
 
 | Destination | When it fires |
 |---|---|
 | **`$GITHUB_STEP_SUMMARY`** | Inside GitHub Actions. Markdown report appears in the workflow run's Summary tab. |
 | **Sticky PR comment** on the merged PR | `GITHUB_REPOSITORY` set + the deployed SHA has an associated PR. The PR grows a `<!-- claudia:verify -->` sticky comment that updates in place on subsequent deploys. |
-| **Slack** | `--slack-webhook <url>` flag or `CLAUDIA_SLACK_WEBHOOK` env. POSTs the markdown to an incoming webhook. |
+| **GitHub check** `claudia / deploy-verified` | Workflow has `checks: write` permission. Posts a check-run against the deployed SHA — success or failure shows up on the originating PR's status-checks UI even post-merge. |
+| **Slack** | `--slack-webhook <url>` flag or `CLAUDIA_SLACK_WEBHOOK` env. POSTs a Block Kit payload (verdict header, repo/target context, pass/fail counts, failure snippets, View run / View PR buttons) to an incoming webhook. |
 
-Disable individually with `--no-step-summary` / `--no-pr-comment`, or omit the Slack flag/env.
+Disable individually with `--no-step-summary` / `--no-pr-comment` / `--no-check`, or omit the Slack flag/env.
 
 **Why PR back-comments matter for merge-to-main flows:** even when deploys happen post-merge (so there's no open PR at deploy time), the merged PR remains the durable record of the change. claudia finds it via `GET /repos/{owner}/{repo}/commits/{sha}/pulls` and posts the verification result there — closing the loop without requiring an open PR.
 

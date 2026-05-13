@@ -169,6 +169,10 @@ const runCmd = defineCommand({
       type: "boolean",
       description: "Disable posting a sticky comment back to the merged PR for this SHA",
     },
+    "no-check": {
+      type: "boolean",
+      description: "Disable posting the 'claudia / deploy-verified' GitHub check against the deployed SHA",
+    },
     exclude: {
       type: "string",
       description:
@@ -279,11 +283,20 @@ const runCmd = defineCommand({
           durationMs: report?.durationMs,
           failedTests: report?.failedTests,
         },
+        check: {
+          passed,
+          target: args.target,
+          passedCount: report?.passed ?? 0,
+          failedCount: report?.failed ?? 0,
+          skippedCount: report?.skipped,
+          flakyCount: report?.flaky,
+        },
       },
       {
         slackWebhook: args["slack-webhook"],
         disableStepSummary: Boolean(args["no-step-summary"]),
         disablePrComment: Boolean(args["no-pr-comment"]),
+        disableCheck: Boolean(args["no-check"]),
       },
     );
 

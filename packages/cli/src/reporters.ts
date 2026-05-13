@@ -1,6 +1,7 @@
 import { appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { buildSlackPayload, type SlackPayloadInput } from "./slack-format.js";
+import { buildCheckOutput, type CheckInput } from "./check-format.js";
 
 const STICKY_MARKER = "<!-- claudia:verify -->";
 
@@ -19,12 +20,18 @@ export interface ReportContext {
    * Step-summary + PR back-comment continue to use {@link markdown} unchanged.
    */
   slack?: Omit<SlackPayloadInput, "repo" | "headSha" | "prUrl" | "commitUrl" | "runUrl" | "branch">;
+  /**
+   * Structured run data used to build the GitHub check-run. When omitted, no
+   * check is posted (the sink is skipped, not failed).
+   */
+  check?: Omit<CheckInput, "markdown">;
 }
 
 export interface ReporterOptions {
   slackWebhook?: string;
   disableStepSummary?: boolean;
   disablePrComment?: boolean;
+  disableCheck?: boolean;
 }
 
 export async function dispatchReporters(ctx: ReportContext, opts: ReporterOptions = {}): Promise<void> {
@@ -52,6 +59,7 @@ export async function dispatchReporters(ctx: ReportContext, opts: ReporterOption
     writeStepSummary(ctx, opts),
     backCommentOnMergedPr(ctx, opts, repo, prNumber),
     postToSlack(ctx, opts, prUrl),
+    postCheckRun(ctx, opts, repo),
   ]);
 }
 
@@ -182,6 +190,52 @@ async function postToSlack(ctx: ReportContext, opts: ReporterOptions, prUrl?: st
     }
   } catch (err) {
     warn("slack", err);
+  }
+}
+
+// ---------- 4. GitHub check-run ----------
+
+async function postCheckRun(
+  ctx: ReportContext,
+  opts: ReporterOptions,
+  repo: string | undefined,
+): Promise<void> {
+  if (opts.disableCheck) return;
+  if (!ctx.check) return; // sink only fires when caller supplied structured data
+  if (!repo) return;
+  if (!ctx.headSha) return;
+
+  const out = buildCheckOutput({ ...ctx.check, markdown: ctx.markdown });
+  try {
+    execFileSync(
+      "gh",
+      [
+        "api",
+        "-X",
+        "POST",
+        `/repos/${repo}/check-runs`,
+        "-H",
+        "Accept: application/vnd.github+json",
+        "-f",
+        `name=${out.name}`,
+        "-f",
+        `head_sha=${ctx.headSha}`,
+        "-f",
+        "status=completed",
+        "-f",
+        `conclusion=${out.conclusion}`,
+        "-f",
+        `output[title]=${out.title}`,
+        "-f",
+        `output[summary]=${out.summary}`,
+      ],
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (err) {
+    // Most common failure: workflow lacks `checks: write` permission. Surface
+    // clearly rather than silently swallow — the user's check just won't show
+    // up otherwise and they'll have no way to know why.
+    warn("check", err);
   }
 }
 
